@@ -28,10 +28,14 @@ install [LibreOffice](https://www.libreoffice.org/) and `pip install pypdfium2`.
 
 ### Web UI (upload → review/correct → download)
 
-On Windows, just double-click **`Start Retheme.cmd`** — it
-installs dependencies on first run, starts the server, and opens your
-browser. Keep its console window open while you work; closing it stops the
-server. Or start it manually:
+On Windows, just double-click **`Start Retheme.cmd`** — it launches the
+self-contained [portable package](#portable-packages-no-installation-no-admin)
+in `dist\` (bundled Python, no install needed), starts the server, and opens
+your browser. Keep its console window open while you work; closing it stops
+the server.
+
+To run from source instead (requires Python on PATH), use
+`scripts\Start Retheme (dev).cmd`, or start it manually:
 
 ```bash
 python -m pptx_template_tool.cli serve          # http://127.0.0.1:8000
@@ -160,7 +164,7 @@ review UI surfaces them with a ⚠ so a human can verify (spec §3.4/§3.6).
 
 ## Portable packages (no installation, no admin)
 
-One build command produces both flavors — `build-portable.cmd` (add
+One build command produces both flavors — `scripts\build-portable.cmd` (add
 `-Only exe` or `-Only ps` to build just one). Both are fully
 self-contained: copy the folder to any Windows machine and run, no Python,
 no pip, no admin rights.
@@ -174,12 +178,13 @@ no pip, no admin rights.
 
 2. **PowerShell-based** — `dist\Retheme PowerShell\` (~76 MB).
    No compiled exe at all: a signed official CPython interpreter + the app
-   source + dependencies, launched by `Start Retheme.cmd` (or the
+   source + dependencies, launched by its own `Start Retheme.cmd` (or the
    `.ps1` directly, which also takes CLI arguments). Use this one where
-   unsigned executables are blocked.
+   unsigned executables are blocked. The root `Start Retheme.cmd` is a thin
+   launcher that hands off to this package.
 
-**Keep them in sync**: re-run `build-portable.cmd` after every change to
-the app so the portable copies match the source.
+**Keep them in sync**: re-run `scripts\build-portable.cmd` after every change
+to the app so the portable copies match the source.
 
 ## Fidelity audit
 

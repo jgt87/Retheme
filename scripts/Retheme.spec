@@ -1,16 +1,21 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_submodules
 
-datas = [('pptx_template_tool\\webapp\\static', 'pptx_template_tool\\webapp\\static')]
+# This spec lives in scripts\; the app source and entry point are one level up.
+_proj = os.path.dirname(SPECPATH)
+_static = os.path.join(_proj, 'pptx_template_tool', 'webapp', 'static')
+
+datas = [(_static, 'pptx_template_tool\\webapp\\static')]
 hiddenimports = ['multipart']
 datas += collect_data_files('pptx')
 hiddenimports += collect_submodules('uvicorn')
 
 
 a = Analysis(
-    ['portable_main.py'],
-    pathex=[],
+    [os.path.join(SPECPATH, 'portable_main.py')],
+    pathex=[_proj],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,

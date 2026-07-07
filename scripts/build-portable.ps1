@@ -12,7 +12,8 @@
 param([ValidateSet("exe", "ps", "both")] [string]$Only = "both")
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$root = Split-Path -Parent $scriptDir   # project root (this script lives in scripts\)
 Set-Location $root
 
 function Invoke-Native([string]$cmdLine, [string]$what) {
@@ -40,7 +41,7 @@ if ($Only -in "exe", "both") {
         '--name "Retheme" ' +
         '--add-data "pptx_template_tool\webapp\static;pptx_template_tool\webapp\static" ' +
         '--collect-data pptx --collect-submodules uvicorn ' +
-        '--hidden-import multipart portable_main.py') "PyInstaller"
+        '--hidden-import multipart "' + $scriptDir + '\portable_main.py"') "PyInstaller"
     Write-Host "exe package: dist\Retheme\"
 }
 
@@ -65,7 +66,7 @@ if ($Only -in "ps", "both") {
     robocopy "$root\pptx_template_tool" "$out\app\pptx_template_tool" /E /NFL /NDL /NJH /NJS /NP `
         /XD __pycache__ | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "robocopy app failed ($LASTEXITCODE)" }
-    Copy-Item "$root\portable_main.py" "$out\app\"
+    Copy-Item "$scriptDir\portable_main.py" "$out\app\"
 
     Write-Host "Installing dependencies into libs\ ..."
     Invoke-Native ("python -m pip install --quiet --target ""$out\libs"" " +
