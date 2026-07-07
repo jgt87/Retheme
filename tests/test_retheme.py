@@ -157,6 +157,32 @@ def test_html_preview_shows_rich_content(tmp_path):
     assert "content-chart" in html
 
 
+def test_content_images_survive_manifest_pptx_export(tmp_path):
+    """A content picture visible in the HTML preview must also land in the
+    rebuilt PPTX on the manifest fallback path (no embedded source template),
+    not silently vanish on download."""
+    import json
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    from pptx_template_tool.application.pptx_generator import generate_pptx
+
+    deck, _ = _make_content_deck(tmp_path)
+    pkg = _brandkit(tmp_path)
+    content, _ = extract_content(deck, pkg)
+    assert content["slides"][0].get("images")  # extraction kept the picture
+
+    # force the manifest rebuild path by dropping the embedded source template
+    manifest = json.loads((pkg / "template.json").read_text("utf-8"))
+    manifest.pop("source_template", None)
+    (pkg / "template.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    out = tmp_path / "branded.pptx"
+    generate_pptx(pkg, content, out)
+    prs = Presentation(str(out))
+    pics = sum(1 for slide in prs.slides for sh in slide.shapes
+               if sh.shape_type == MSO_SHAPE_TYPE.PICTURE)
+    assert pics >= 1
+
+
 def test_slide_to_slide_correspondence(tmp_path):
     """Content of source slide N must land on output slide N — never merge
     into, or spill over to, a neighboring slide."""

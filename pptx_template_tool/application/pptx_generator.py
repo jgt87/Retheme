@@ -12,6 +12,8 @@ positioned text boxes. Vector (SVG) decorations are skipped with a warning.
 
 from __future__ import annotations
 
+import base64
+import io
 import json
 import shutil
 import tempfile
@@ -69,6 +71,30 @@ def _delete_all_slides(prs):
         xml_slides.remove(sld)
 
 
+def _add_content_images(slide, images, slide_w, slide_h, warnings, slide_no):
+    """Place the content deck's own pictures onto the rebuilt slide.
+
+    content_extract keeps them as percent-positioned, base64-encoded blobs;
+    the HTML preview renders them, so the PPTX export must too or the picture
+    silently vanishes on download.
+    """
+    for img in images or []:
+        data = img.get("data_b64")
+        if not data:
+            continue
+        try:
+            slide.shapes.add_picture(
+                io.BytesIO(base64.b64decode(data)),
+                Emu(round(img.get("x_pct", 0) * slide_w)),
+                Emu(round(img.get("y_pct", 0) * slide_h)),
+                Emu(round(img.get("w_pct", 0) * slide_w)),
+                Emu(round(img.get("h_pct", 0) * slide_h)))
+        except Exception:
+            warnings.append(
+                f"slide {slide_no}: a content image could not be placed in "
+                f"the PPTX export and was skipped")
+
+
 # --------------------------------------------- path 1: native template
 
 def _generate_from_source(source_path: Path, manifest: dict, content: dict,
@@ -105,6 +131,9 @@ def _generate_from_source(source_path: Path, manifest: dict, content: dict,
                 box.text_frame.text = f'[unsupported layout: {wanted}]'
                 box.text_frame.paragraphs[0].runs[0].font.color.rgb = \
                     RGBColor(0xB3, 0x26, 0x1E)
+                _add_content_images(slide, slide_spec.get("images"),
+                                    prs.slide_width, prs.slide_height,
+                                    warnings, i)
                 continue
 
             slide = prs.slides.add_slide(layout)
@@ -147,6 +176,9 @@ def _generate_from_source(source_path: Path, manifest: dict, content: dict,
                             f'slide {i}: layout "{layout.name}" has no '
                             f'placeholder for "{side}" column')
 
+            _add_content_images(slide, slide_spec.get("images"),
+                                prs.slide_width, prs.slide_height, warnings, i)
+
         prs.save(str(out_path))
         return warnings
     finally:
@@ -175,6 +207,8 @@ def _generate_from_manifest(package_dir: Path, manifest: dict, content: dict,
         except LayoutNotFoundError:
             warnings.append(f'slide {i}: no layout matches '
                             f'"{slide_spec.get("layout")}" — blank slide used')
+            _add_content_images(slide, slide_spec.get("images"),
+                                prs.slide_width, prs.slide_height, warnings, i)
             continue
 
         bg = layout_def.get("background", {})
@@ -274,6 +308,9 @@ def _generate_from_manifest(package_dir: Path, manifest: dict, content: dict,
         for side in ("left", "right"):
             if slide_spec.get(side) is not None:
                 put_text(("body", "obj"), slide_spec[side])
+
+        _add_content_images(slide, slide_spec.get("images"),
+                            prs.slide_width, prs.slide_height, warnings, i)
 
     prs.save(str(out_path))
     return warnings
