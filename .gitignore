@@ -12,9 +12,8 @@ env/
 .coverage
 htmlcov/
 
-# PyInstaller build output
+# PyInstaller intermediate build output (dist/ is committed for distribution)
 build/
-dist/
 
 # Scratch / working files
 temp/
