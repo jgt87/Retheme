@@ -1,0 +1,45 @@
+{
+  "title": "Q3 Business Review",
+  "slides": [
+    {
+      "layout": "title",
+      "title": "Q3 Business Review",
+      "subtitle": "Prepared by the Strategy Team — October 2026"
+    },
+    {
+      "layout": "section_header",
+      "title": "Market Overview"
+    },
+    {
+      "layout": "content",
+      "title": "Key Takeaways",
+      "bullets": [
+        "Revenue grew 14% year-over-year, ahead of the 10% target",
+        {
+          "text": "Two new markets contributed above plan",
+          "children": ["Netherlands: +22% vs. plan", "Belgium: +9% vs. plan"]
+        },
+        "Churn stabilized at 2.1% after the retention program launch",
+        "Operating margin improved 180 bps on supply-chain savings"
+      ]
+    },
+    {
+      "layout": "two_content",
+      "title": "Opportunities vs. Risks",
+      "left": [
+        "Enterprise segment demand up 30%",
+        "Partner channel now 25% of new bookings",
+        "AI-assisted onboarding cut time-to-value in half"
+      ],
+      "right": [
+        "FX headwinds expected in Q4",
+        "Two competitors cut list prices by ~10%",
+        "Hiring pipeline behind plan in engineering"
+      ]
+    },
+    {
+      "layout": "nonexistent_layout_type",
+      "title": "This slide should be flagged as unsupported"
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+python-pptx>=1.0
+lxml>=5.0
+Pillow>=10.0
+fastapi>=0.110
+uvicorn[standard]>=0.29
+jinja2>=3.1
+python-multipart>=0.0.9
+# optional: pypdfium2 enables high-fidelity previews when LibreOffice is installed
+# pypdfium2>=4.0
