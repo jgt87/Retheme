@@ -1,11 +1,14 @@
 # Python
 __pycache__/
-*.py[cod]
+# NB: do NOT ignore *.pyd here — they are compiled C-extension modules that the
+# bundled runtime in dist/ needs. Only ignore bytecode.
+*.py[co]
 *.egg-info/
 .eggs/
-.venv/
-venv/
-env/
+# Anchored to repo root so these don't match the bundled stdlib's Lib/venv/ etc.
+/.venv/
+/venv/
+/env/
 
 # Testing
 .pytest_cache/
