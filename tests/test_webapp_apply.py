@@ -122,6 +122,31 @@ def test_index_is_not_cacheable():
     assert r.headers.get("cache-control") == "no-store"
 
 
+def test_missing_source_flags_approximate_output(tmp_path):
+    """A brandkit without an embedded source template forces the rebuild
+    path; apply must warn the user prominently that output is approximate."""
+    import json
+
+    deck = _deck_with_dominant_color(tmp_path)
+    pkg = _brandkit_with_distinct_theme(tmp_path)
+    # strip the embedded source -> apply falls back to the rebuild path
+    manifest = json.loads((pkg / "template.json").read_text("utf-8"))
+    manifest.pop("source_template", None)
+    (pkg / "template.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    out = client.post(
+        "/api/apply",
+        files={"content_file": ("deck.pptx", deck.read_bytes())},
+        data={"package_path": str(pkg)}).json()
+    apply_id = out["apply_id"]
+    choices = {d["id"]: d["default"] for d in out.get("decisions", [])
+               if d.get("default")}
+    r = client.post(f"/api/apply/{apply_id}/confirm", json={"choices": choices})
+    assert r.status_code == 200, r.text
+    warnings = r.json()["warnings"]
+    assert any(w.startswith("APPROXIMATE OUTPUT") for w in warnings), warnings
+
+
 def test_preview_draft_validates_choices(tmp_path):
     deck = _deck_with_dominant_color(tmp_path)
     pkg = _brandkit_with_distinct_theme(tmp_path)

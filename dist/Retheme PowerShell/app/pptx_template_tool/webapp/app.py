@@ -412,9 +412,20 @@ def _execute_apply(apply_id: str, choices: dict) -> dict:
                                                      job["name"])
             gen_warnings += pv_warnings
         except FileNotFoundError:
-            # old package without embedded source: rebuild-from-text path
+            # old package without embedded source: rebuild-from-text path.
+            # Flag it prominently — this output is an approximation and some
+            # content (pictures, charts, tables, grouped shapes, exact
+            # positioning) may not carry over faithfully.
             html_doc, gen_warnings = generate_html(pkg_dir, content,
                                                    inline_assets=True)
+            gen_warnings = [
+                "APPROXIMATE OUTPUT: this brandkit has no embedded source "
+                "template, so the deck was rebuilt from its extracted text and "
+                "images. Some content — pictures, charts, tables, grouped "
+                "shapes and exact positioning — may not carry over "
+                "faithfully. Re-extract the template with the current tool to "
+                "get full-fidelity output."
+            ] + gen_warnings
     except Exception as exc:
         raise HTTPException(422, f"apply failed: {type(exc).__name__}: {exc}")
 

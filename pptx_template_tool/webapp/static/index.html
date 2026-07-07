@@ -902,16 +902,18 @@ function finishApply(out) {
     $("#tabbtn-preview").title = "";
     $("#result-info").textContent = `${out.slides} slides`;
     const warnings = out.warnings || [];
-    const stale = warnings.filter(w => w.startsWith("BRANDKIT OUTDATED"));
-    const rest = warnings.filter(w => !w.startsWith("BRANDKIT OUTDATED"));
+    const isCritical = w => w.startsWith("BRANDKIT OUTDATED")
+                         || w.startsWith("APPROXIMATE OUTPUT");
+    const critical = warnings.filter(isCritical);
+    const rest = warnings.filter(w => !isCritical(w));
     $("#apply-warnings").innerHTML =
-      stale.map(w => `<div class="error-box">${w}</div>`).join("") +
+      critical.map(w => `<div class="error-box">${w}</div>`).join("") +
       (rest.length ? rest.map(w => "&bull; " + w).join("<br>") : "");
     const details = $("#notes-details");
     if (warnings.length) {
       $("#notes-count").textContent = `(${warnings.length})`;
       details.classList.remove("hidden");
-      details.open = stale.length > 0;  // auto-expand critical warnings
+      details.open = critical.length > 0;  // auto-expand critical warnings
     } else {
       details.classList.add("hidden");
     }
