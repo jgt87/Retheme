@@ -110,6 +110,16 @@
     border-radius:var(--r-xs); border:1px solid rgba(0,0,0,.2);
     vertical-align:-2px; margin-left:2px; }
   .decision select { width:auto; min-width:220px; }
+  .protect-card { border:1px solid var(--line); border-radius:var(--r-md);
+                  padding:12px 14px; margin-bottom:10px; }
+  .protect-card label.opt { font-size:13px; }
+  .protect-card .slide-grid { display:flex; flex-wrap:wrap; gap:4px 10px;
+                  margin:6px 0; }
+  .protect-card .slide-grid label.opt { display:inline-flex; align-items:center;
+                  gap:3px; margin:0; }
+  .protect-card .pmode label.opt, .protect-card .padj label.opt {
+                  display:block; margin:3px 0; }
+  .protect-card .padj { margin:6px 0 0 20px; }
   .choices-grid { display:grid; grid-template-columns:minmax(320px, 420px) 1fr;
                   gap:18px; align-items:start; }
   @media (max-width: 900px) { .choices-grid { grid-template-columns:1fr; } }
@@ -702,7 +712,7 @@ $("#apply-btn").addEventListener("click", async () => {
     const out = await res.json();
     applyId = out.apply_id;
     if (out.decisions && out.decisions.length) {
-      renderDecisions(out.decisions);
+      renderDecisions(out.decisions, out.slides || 0);
       return;
     }
     finishApply(out);
@@ -724,6 +734,17 @@ function currentChoices() {
     const checked = div.querySelector("input.d-choice:checked");
     if (checked) choices[div.dataset.id] = checked.value;
   });
+  // per-slide protection (reserved keys the retheme engine understands)
+  const pb = $("#protect-block");
+  if (pb) {
+    const slides = [...pb.querySelectorAll(".p-slide:checked")].map(c => c.value);
+    if (slides.length) {
+      choices["__protect__"] = slides.join(",");
+      choices["__protect_mode__"] = pb.querySelector(".p-mode:checked").value;
+      choices["__protect_apply__"] =
+        [...pb.querySelectorAll(".p-adj:checked")].map(c => c.value).join(",");
+    }
+  }
   return choices;
 }
 
@@ -835,7 +856,42 @@ function previewFontNames(label, fonts) {
   return out;
 }
 
-function renderDecisions(decisions) {
+function renderProtect(n) {
+  if (!n) return;
+  const box = document.createElement("div");
+  box.className = "protect-card";
+  box.id = "protect-block";
+  const slides = Array.from({ length: n }, (_, k) => k + 1).map(s =>
+    `<label class="opt"><input type="checkbox" class="p-slide" value="${s}"> ${s}</label>`
+  ).join("");
+  const adj = [["color", "Colors"], ["font", "Fonts"], ["title", "Title sizes"],
+               ["heading", "Headings"], ["resize", "Resize"]].map(([v, l]) =>
+    `<label class="opt"><input type="checkbox" class="p-adj" value="${v}" checked> ${l}</label>`
+  ).join("");
+  box.innerHTML = `<strong>Protect slides</strong>
+    <p class="muted" style="margin:4px 0 8px">Tick any slides that should ignore
+      the choices above. <b>Full retain</b> keeps them looking exactly as in your
+      deck; <b>Partial</b> still applies only the adjustments you leave ticked.</p>
+    <div class="slide-grid">${slides}</div>
+    <div class="pmode" style="margin-top:8px">
+      <label class="opt"><input type="radio" name="pmode" class="p-mode"
+        value="full" checked> Full retain (original look)</label>
+      <label class="opt"><input type="radio" name="pmode" class="p-mode"
+        value="partial"> Partial — still apply:</label>
+    </div>
+    <div class="padj hidden">${adj}</div>`;
+  $("#choices-list").appendChild(box);
+  const padj = box.querySelector(".padj");
+  box.querySelectorAll(".p-mode").forEach(el => el.addEventListener("change", () => {
+    padj.classList.toggle("hidden",
+      box.querySelector(".p-mode:checked").value !== "partial");
+    schedulePreviewRefresh();
+  }));
+  box.querySelectorAll(".p-slide, .p-adj").forEach(el =>
+    el.addEventListener("change", schedulePreviewRefresh));
+}
+
+function renderDecisions(decisions, slideCount) {
   const list = $("#choices-list");
   list.innerHTML = "";
   decisions.forEach((d, i) => {
@@ -868,6 +924,7 @@ function renderDecisions(decisions) {
   });
   list.querySelectorAll(".d-choice").forEach(el =>
     el.addEventListener("change", schedulePreviewRefresh));
+  renderProtect(slideCount);  // per-slide "leave as-is" controls
   $("#choices-card").classList.remove("hidden");
   $("#choices-card").scrollIntoView({ behavior: "smooth" });
   refreshDraftPreview();  // first render uses the pre-selected defaults

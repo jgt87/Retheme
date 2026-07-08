@@ -284,6 +284,76 @@ def test_retheme_restyles_hardcoded_colors_fonts_and_title_sizes(tmp_path):
     assert t_run.font.size is None  # explicit size stripped -> brand layout size
 
 
+def _two_slide_colored_deck(tmp_path: Path) -> Path:
+    """Two slides, each with a run hard-coded to the source theme's accent1
+    (4F81BD) — which the default retheme rebrands to the brand accent1."""
+    from pptx.dml.color import RGBColor
+    prs = Presentation()
+    for n in ("one", "two"):
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        box = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(1))
+        r = box.text_frame.paragraphs[0].add_run()
+        r.text = f"slide {n}"
+        r.font.color.rgb = RGBColor.from_string("4F81BD")
+    deck = tmp_path / "two.pptx"
+    prs.save(str(deck))
+    return deck
+
+
+def _run_color(slide) -> str | None:
+    for sh in slide.shapes:
+        if sh.has_text_frame and sh.text_frame.paragraphs[0].runs:
+            return str(sh.text_frame.paragraphs[0].runs[0].font.color.rgb)
+    return None
+
+
+def test_protected_slide_full_retains_original(tmp_path):
+    """A slide protected with mode 'full' ignores the choices entirely: its
+    hard-coded colors are not rebranded while unprotected slides are."""
+    deck = _two_slide_colored_deck(tmp_path)
+    pkg = _brandkit_with_distinct_theme(tmp_path)
+    out = tmp_path / "out.pptx"
+    retheme_pptx(pkg, deck, out,
+                 choices={"__protect__": "1", "__protect_mode__": "full"})
+    branded = Presentation(str(out))
+    assert _run_color(branded.slides[0]) == "4F81BD"   # protected: unchanged
+    assert _run_color(branded.slides[1]) == "10069F"   # rebranded
+
+
+def test_protected_slide_partial_skips_unselected(tmp_path):
+    """Mode 'partial' applies only the ticked adjustment categories; colors
+    left unticked are not rebranded on the protected slide."""
+    deck = _two_slide_colored_deck(tmp_path)
+    pkg = _brandkit_with_distinct_theme(tmp_path)
+    out = tmp_path / "out.pptx"
+    retheme_pptx(pkg, deck, out,
+                 choices={"__protect__": "1", "__protect_mode__": "partial",
+                          "__protect_apply__": "font,title,heading,resize"})
+    branded = Presentation(str(out))
+    assert _run_color(branded.slides[0]) == "4F81BD"   # color skipped
+    assert _run_color(branded.slides[1]) == "10069F"   # fully rebranded
+
+
+def test_full_retain_bakes_theme_colors_to_source(tmp_path):
+    """Freezing converts theme-linked (schemeClr) colors to the SOURCE hex, so
+    the brand theme the slide now lands under cannot shift its appearance."""
+    from pptx.enum.dml import MSO_THEME_COLOR
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    sh = slide.shapes.add_shape(1, Inches(1), Inches(1), Inches(2), Inches(1))
+    sh.fill.solid()
+    sh.fill.fore_color.theme_color = MSO_THEME_COLOR.ACCENT_1  # schemeClr accent1
+    deck = tmp_path / "themed.pptx"
+    prs.save(str(deck))
+
+    pkg = _brandkit_with_distinct_theme(tmp_path)  # brand accent1 = 10069F
+    out = tmp_path / "out.pptx"
+    retheme_pptx(pkg, deck, out,
+                 choices={"__protect__": "1", "__protect_mode__": "full"})
+    shape = Presentation(str(out)).slides[0].shapes[0]
+    assert str(shape.fill.fore_color.rgb) == "4F81BD"  # source accent1, baked in
+
+
 def test_preview_renders_from_rethemed_deck(tmp_path):
     """The HTML preview must be rendered FROM the rethemed PPTX: content at
     its true positions, pictures/tables inline, layout furniture behind."""

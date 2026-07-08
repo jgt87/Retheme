@@ -277,6 +277,53 @@ def _restyle_blob(blob: bytes, color_map: dict[str, str],
                           standalone=True)
 
 
+# scheme-color value -> theme slot. bg/tx follow the default color map
+# (bg1->lt1, tx1->dk1, bg2->lt2, tx2->dk2); accents/dk/lt map to themselves.
+_SCHEME_TO_SLOT = {
+    "dk1": "dk1", "lt1": "lt1", "dk2": "dk2", "lt2": "lt2",
+    "tx1": "dk1", "bg1": "lt1", "tx2": "dk2", "bg2": "lt2",
+    **{f"accent{i}": f"accent{i}" for i in range(1, 7)},
+}
+
+
+def _freeze_theme(root, theme_colors: dict, theme_fonts: dict) -> None:
+    """Bake a slide's theme-linked formatting to fixed source values so it can
+    no longer re-resolve against whatever theme the slide lands under.
+
+    schemeClr -> srgbClr(source hex), keeping any tint/shade/lum modifier
+    children; theme font refs (+mj-*/+mn-*) -> the source theme's actual
+    typefaces. Used for "fully retain original look" protected slides."""
+    for el in list(root.iter(f"{{{A_NS}}}schemeClr")):
+        hexv = theme_colors.get(_SCHEME_TO_SLOT.get(el.get("val")))
+        if not hexv:
+            continue  # phClr / hlink / unknown: leave for the theme to resolve
+        el.tag = f"{{{A_NS}}}srgbClr"      # keeps children (lumMod/tint/shade…)
+        el.set("val", hexv)
+    major, minor = theme_fonts.get("major"), theme_fonts.get("minor")
+    for tag in ("latin", "ea", "cs"):
+        for el in root.iter(f"{{{A_NS}}}{tag}"):
+            face = el.get("typeface") or ""
+            if face.startswith("+mj-") and major:
+                el.set("typeface", major)
+            elif face.startswith("+mn-") and minor:
+                el.set("typeface", minor)
+
+
+def _parse_protection(choices: dict) -> tuple[set[int], str, set[str]]:
+    """Read the per-slide protection controls from the choices map.
+
+    __protect__       = "2,4,7"  (1-based slide numbers to leave alone)
+    __protect_mode__  = "full" | "partial"
+    __protect_apply__ = "color,font,title,heading,resize"  (partial: still-on)
+    Returns (protected 1-based slide numbers, mode, applied-adjustment set)."""
+    raw = (choices.get("__protect__") or "").strip()
+    protected = {int(x) for x in raw.split(",") if x.strip().isdigit()}
+    mode = choices.get("__protect_mode__", "full")
+    apply_set = {a for a in (choices.get("__protect_apply__") or "").split(",")
+                 if a}
+    return protected, mode, apply_set
+
+
 _TITLE_PH_TYPES = {"title", "ctrTitle", "subTitle"}
 HEADING_MIN_CENTIPT = 2000  # runs >= 20pt in plain text boxes count as headings
 
@@ -882,6 +929,15 @@ def retheme_pptx(package_dir: str | Path, deck_path: str | Path,
         default_sub_fmt = (default_sub_ph or {}).get(
             "format_levels", {}).get("1", {"size_pt": 14})
 
+        # per-slide protection: listed slides opt out of the choices. "full"
+        # freezes them to their original look (theme colors/fonts baked in);
+        # "partial" still applies only the chosen adjustment categories.
+        protected, protect_mode, protect_apply = _parse_protection(choices)
+        src_theme_colors = _theme_colors_of(src)
+        src_theme_fonts = _theme_fonts_of(src)
+        protected_parts: set = set()   # cloned parts of fully-frozen slides
+        _ALL_ADJ = {"color", "font", "title", "heading", "resize"}
+
         _delete_all_slides(dest)
         cloner = _PartCloner(dest.part.package)
         # map each source slide part to its 0-based position, so an internal
@@ -898,6 +954,14 @@ def retheme_pptx(package_dir: str | Path, deck_path: str | Path,
                                   layout_overrides)
             new_slide = dest.slides.add_slide(layout)
 
+            # which adjustments this slide is open to (all, a chosen subset,
+            # or none when fully frozen)
+            is_full = i in protected and protect_mode == "full"
+            if i in protected:
+                allow = set() if is_full else set(protect_apply)
+            else:
+                allow = _ALL_ADJ
+
             # transplant the whole shape tree (and any slide bg override)
             new_sld = new_slide._element
             src_cSld = s._element.find(f"{{{P_NS}}}cSld")
@@ -906,7 +970,7 @@ def retheme_pptx(package_dir: str | Path, deck_path: str | Path,
             new_cSld.remove(new_spTree)
             new_cSld.append(copy.deepcopy(
                 src_cSld.find(f"{{{P_NS}}}spTree")))
-            if scale_factor is not None:
+            if scale_factor is not None and "resize" in allow:
                 _scale_shape_tree(
                     new_cSld.find(f"{{{P_NS}}}spTree"), scale_factor)
             src_bg = src_cSld.find(f"{{{P_NS}}}bg")
@@ -932,6 +996,9 @@ def retheme_pptx(package_dir: str | Path, deck_path: str | Path,
                 else:
                     child = cloner.clone(rel.target_part)
                     new_rid = new_slide.part.relate_to(child, rel.reltype)
+                    if is_full:
+                        # keep this slide's charts/diagrams unrestyled too
+                        protected_parts.add(child)
                 rid_map[r_id] = new_rid
 
             # carry over speaker notes (their own part + relationships)
@@ -942,10 +1009,16 @@ def retheme_pptx(package_dir: str | Path, deck_path: str | Path,
             # and fonts matching the source theme -> brandkit equivalents;
             # title placeholders adopt the brand layout's font sizes. (These
             # touch only the XML tree, not relationship ids, so they run now.)
-            _restyle_tree(new_sld, color_map, font_map)
-            if adopt_title_sizes:
+            if is_full:
+                # bake original theme colors/fonts in so the brand theme this
+                # slide now lands under cannot shift its appearance
+                _freeze_theme(new_sld, src_theme_colors, src_theme_fonts)
+            _restyle_tree(new_sld,
+                          color_map if "color" in allow else {},
+                          font_map if "font" in allow else {})
+            if adopt_title_sizes and "title" in allow:
                 _adopt_brand_title_sizes(new_sld)
-            if heading_mode in ("convert", "adopt"):
+            if heading_mode in ("convert", "adopt") and "heading" in allow:
                 layout_rec = manifest_layouts.get(layout.name, {})
                 title_ph = _title_ph_of(layout_rec) or default_title_ph
                 if title_ph:
@@ -1004,6 +1077,8 @@ def retheme_pptx(package_dir: str | Path, deck_path: str | Path,
         # colors AND fonts hard-coded to the source theme -> brandkit
         restyled = 0
         for part in cloner.cloned:
+            if part in protected_parts:
+                continue  # chart/diagram of a fully-frozen slide: leave as-is
             if part.content_type.endswith("xml"):
                 new_blob = _restyle_blob(part.blob, color_map, font_map)
                 if new_blob is not part.blob:

@@ -147,6 +147,24 @@ def test_missing_source_flags_approximate_output(tmp_path):
     assert any(w.startswith("APPROXIMATE OUTPUT") for w in warnings), warnings
 
 
+def test_apply_reports_slide_count_and_accepts_protection(tmp_path):
+    """The apply response carries the deck's slide count (for the protect-slides
+    UI), and the reserved __protect__ keys pass through confirm and retheme."""
+    deck = _deck_with_dominant_color(tmp_path)  # one slide
+    pkg = _brandkit_with_distinct_theme(tmp_path)
+    out = client.post(
+        "/api/apply",
+        files={"content_file": ("deck.pptx", deck.read_bytes())},
+        data={"package_path": str(pkg)}).json()
+    assert out["slides"] == 1
+    apply_id = out["apply_id"]
+    choices = {d["id"]: d["default"] for d in out["decisions"] if d.get("default")}
+    choices |= {"__protect__": "1", "__protect_mode__": "full"}
+    r = client.post(f"/api/apply/{apply_id}/confirm", json={"choices": choices})
+    assert r.status_code == 200, r.text
+    assert (Path(webapp.APPLY_JOBS[apply_id]["dir"]) / "branded.pptx").is_file()
+
+
 def test_preview_draft_validates_choices(tmp_path):
     deck = _deck_with_dominant_color(tmp_path)
     pkg = _brandkit_with_distinct_theme(tmp_path)

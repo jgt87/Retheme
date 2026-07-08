@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import tempfile
 import threading
 import time
 import uuid
+import zipfile
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
@@ -330,8 +332,19 @@ async def apply_brandkit(content_file: UploadFile,
         # currently selected choices (pre-selected defaults included), so
         # every decision's effect is rendered server-side
         job["decisions"] = decisions
-        return {"apply_id": apply_id, "decisions": decisions}
+        return {"apply_id": apply_id, "decisions": decisions,
+                "slides": _deck_slide_count(deck_path)}
     return _execute_apply(apply_id, {})
+
+
+def _deck_slide_count(deck_path: Path) -> int:
+    """Slide count of an OOXML deck, straight from the zip (no full parse)."""
+    try:
+        with zipfile.ZipFile(deck_path) as z:
+            return sum(1 for n in z.namelist()
+                       if re.fullmatch(r"ppt/slides/slide\d+\.xml", n))
+    except Exception:
+        return 0
 
 
 def _validated_choices(body: dict) -> dict:
