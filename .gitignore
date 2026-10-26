@@ -15,8 +15,9 @@ __pycache__/
 .coverage
 htmlcov/
 
-# PyInstaller intermediate build output (dist/ is committed for distribution)
+# PyInstaller build output; portable packages are published as GitHub Releases
 build/
+/dist/
 
 # Scratch / working files
 temp/
@@ -33,3 +34,6 @@ examples/demo-branded.html
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# repowise owner-digest key (local)
+.repowise/events.key

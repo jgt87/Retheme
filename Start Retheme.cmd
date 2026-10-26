@@ -11,6 +11,7 @@ if not exist "%RUNNER%" (
     echo   "%RUNNER%"
     echo.
     echo Build it first by running:  scripts\build-portable.cmd
+    echo or extract the release zip from https://github.com/jgt87/Retheme/releases
     pause
     exit /b 1
 )

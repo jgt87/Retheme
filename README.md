@@ -30,7 +30,8 @@ install [LibreOffice](https://www.libreoffice.org/) and `pip install pypdfium2`.
 
 On Windows, just double-click **`Start Retheme.cmd`** — it launches the
 self-contained [portable package](#portable-packages-no-installation-no-admin)
-in `dist\` (bundled Python, no install needed), starts the server, and opens
+in `dist\` (bundled Python, no install needed; build it first or extract the
+release zip there), starts the server, and opens
 your browser. Keep its console window open while you work; closing it stops
 the server.
 
@@ -164,6 +165,10 @@ review UI surfaces them with a ⚠ so a human can verify (spec §3.4/§3.6).
 
 ## Portable packages (no installation, no admin)
 
+Prebuilt packages are attached to each
+[GitHub Release](https://github.com/jgt87/Retheme/releases) — download a zip,
+extract it, and run. To build them yourself:
+
 One build command produces both flavors — `scripts\build-portable.cmd` (add
 `-Only exe` or `-Only ps` to build just one). Both are fully
 self-contained: copy the folder to any Windows machine and run, no Python,
@@ -232,3 +237,7 @@ pptx_template_tool/
 │   └── static/index.html  review UI
 └── cli.py                 extract / apply / serve
 ```
+
+## License
+
+[MIT](LICENSE)
