@@ -15,6 +15,11 @@ Template.pptx ──▶ EXTRACTION ──▶ template-package/ ──▶ APPLICA
                                  └── previews/
 ```
 
+![examples/demo-content.pptx rethemed with a fictional "Lumen & Co." brandkit](docs/screenshots/rethemed-deck.png)
+
+*`examples/demo-content.pptx`, a plain 4:3 deck, rethemed with a brandkit
+extracted from a fictional "Lumen & Co." template.*
+
 ## Setup
 
 ```bash
@@ -51,13 +56,23 @@ The UI covers the full workflow:
    % coordinates are recomputed automatically). Saving rewrites
    `template.json` *and* regenerates `template.md` from it — the two can
    never diverge. Download the package as a zip.
+
+   ![Brandkit review: color roles, layout previews and extracted placeholder data](docs/screenshots/extract-review.png)
+
 2. **Apply a brandkit to a content deck** — upload a presentation containing
    your content/text, and point at a brandkit: the one just extracted, an
-   uploaded template-package zip, or a package folder on disk.
+   uploaded template-package zip, or a package folder on disk. Where the
+   brandkit and the deck differ, you confirm how to handle it (e.g. title
+   sizes, slides to protect) against a live preview.
+
+   ![Retheme deck: content upload, brandkit source and preference choices with live preview](docs/screenshots/retheme-choices.png)
+
 3. **Result** — an inline HTML preview of the branded deck, plus
    **Download PPTX**: a native PowerPoint file built on the template's own
    layouts (the package embeds the source template), fully editable in
    PowerPoint. Download HTML is also available for the HTML→PPTX pipeline.
+
+   ![Preview & export: rethemed deck preview with PPTX and HTML downloads](docs/screenshots/preview-export.png)
 
 ### CLI
 
