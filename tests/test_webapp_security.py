@@ -42,6 +42,30 @@ def test_cross_origin_writes_rejected():
     assert r.status_code == 400  # rejected for extension, not origin
 
 
+@pytest.mark.parametrize("origin", [
+    "http://localhost.evil.example",       # passed the old prefix check
+    "http://127.0.0.1.evil.example",
+    "http://localhost@evil.example",
+    "https://localhost",                    # the UI is only ever served over http
+    "null",
+])
+def test_lookalike_local_origins_rejected(origin):
+    r = client.post("/api/extract", files={"file": ("t.pptx", b"x")},
+                    headers={"Origin": origin})
+    assert r.status_code == 403
+
+
+def test_ui_assets_served_and_nothing_else():
+    for name, ctype in (("tokens.css", "text/css"), ("app.css", "text/css"),
+                        ("app.js", "text/javascript")):
+        r = client.get(f"/{name}")
+        assert r.status_code == 200 and r.headers["content-type"].startswith(ctype)
+    for name in ("index.html", "app.py", "..%2Fapp.py", "__init__.py"):
+        assert client.get(f"/{name}").status_code == 404
+    page = client.get("/").text
+    assert "{{version}}" not in page and 'href="tokens.css?v=' in page
+
+
 def test_put_manifest_rejects_full_replacement(tmp_path):
     pkg = tmp_path / "pkg"
     pkg.mkdir()

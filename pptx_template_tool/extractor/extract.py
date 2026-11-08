@@ -75,9 +75,11 @@ def _theme_for_master(master) -> object | None:
 
 
 def extract_template(pptx_path: str | Path, out_dir: str | Path,
-                     progress=None) -> dict:
+                     progress=None, name: str | None = None) -> dict:
     """Run full extraction. Returns the manifest dict; writes the package
-    (template.json, template.md, assets/, previews/) to out_dir."""
+    (template.json, template.md, assets/, previews/) to out_dir.
+    `name` is the template's display name; defaults to the file stem (the web
+    app stores uploads under a fixed file name and passes the original)."""
     pptx_path = Path(pptx_path)
     out_dir = Path(out_dir)
     assets_dir = out_dir / "assets"
@@ -95,13 +97,13 @@ def extract_template(pptx_path: str | Path, out_dir: str | Path,
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
     try:
-        return _extract(parse_path, pptx_path, out_dir, assets_dir, report)
+        return _extract(parse_path, pptx_path, out_dir, assets_dir, report, name)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def _extract(parse_path: Path, pptx_path: Path, out_dir: Path,
-             assets_dir: Path, report) -> dict:
+             assets_dir: Path, report, name: str | None = None) -> dict:
     prs = Presentation(str(parse_path))
     slide_w, slide_h = prs.slide_width, prs.slide_height
     slide_w_in, slide_h_in = emu_to_in(slide_w), emu_to_in(slide_h)
@@ -118,7 +120,7 @@ def _extract(parse_path: Path, pptx_path: Path, out_dir: Path,
 
     manifest: dict = {
         "extractor_version": __version__,
-        "template_name": pptx_path.stem,
+        "template_name": name or pptx_path.stem,
         "source_file": pptx_path.name,
         "source_template": f"source/{pptx_path.name}",
         "slide_geometry": {

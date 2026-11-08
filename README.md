@@ -221,13 +221,30 @@ template to confirm nothing was dropped.
 
 ## Tests
 
-`python -m pytest tests/` runs the regression suite. Each test builds a
-synthetic template exercising one extraction nuance found on real corporate
-templates — reversed gradient stops, true image backgrounds, image-filled
-shapes, hidden helper shapes, zero-width/height grid lines, off-canvas
-guides, `useBgFill` masks, raster-fallback exclusion from output, `.potx`
-content types, and native PPTX generation — so future changes that re-break
-one fail immediately.
+`python -m pytest tests/` runs the regression suite (offline, about 20 s). Each
+extraction test builds a synthetic template exercising one nuance found on
+real corporate templates — reversed gradient stops, true image backgrounds,
+image-filled shapes, hidden helper shapes, zero-width/height grid lines,
+off-canvas guides, `useBgFill` masks, raster-fallback exclusion from output,
+`.potx` content types, and native PPTX generation — so future changes that
+re-break one fail immediately. The suite also covers retheme fidelity, web
+security (path containment, cross-site request rejection, upload limits, XSS
+escaping) and the UI's design rules (colors and font sizes only from
+`tokens.css`, labelled controls).
+
+The browser smoke test drives the whole workflow in a real browser and runs an
+axe accessibility scan (WCAG 2.1 A/AA) on every screen:
+
+```bash
+pip install -r requirements-dev.txt
+python -m playwright install chromium        # or: set RETHEME_E2E_CHANNEL=msedge
+python -m pytest e2e/
+python scripts/screenshots.py                # regenerate the README screenshots
+```
+
+CI (GitHub Actions, Windows) runs both on every push. Pushing a `vX.Y.Z` tag
+builds the portable packages and publishes them as a release with SHA-256
+checksums; see `AGENTS.md` → Releasing.
 
 ## Project layout
 
@@ -244,13 +261,22 @@ pptx_template_tool/
 │   ├── classify.py        asset type heuristics + role notes
 │   ├── grid.py            margin/gutter/title-baseline derivation
 │   ├── preview.py         LibreOffice pipeline w/ schematic fallback
-│   └── package.py         template.json + template.md writer (md ⇐ json)
+│   ├── package.py         template.json + template.md writer (md ⇐ json)
+│   └── audit.py           independent fidelity audit
 ├── application/
-│   └── generator.py       package + content JSON -> HTML deck
+│   ├── retheme.py         copy content slides into the brand template
+│   ├── conflicts.py       deck vs brandkit differences -> user choices
+│   ├── generator.py       package + content JSON -> HTML deck
+│   ├── pptx_generator.py  rebuild path (packages without embedded source)
+│   ├── content_extract.py deck -> content JSON
+│   └── preview_render.py  HTML preview of a rethemed deck
 ├── webapp/
-│   ├── app.py             FastAPI: extract/review/correct/download
-│   └── static/index.html  review UI
-└── cli.py                 extract / apply / serve
+│   ├── app.py             FastAPI: extract/review/correct/apply/download
+│   └── static/            index.html, tokens.css, app.css, app.js
+└── cli.py                 extract / apply / content / restyle / audit / serve
+tests/                     pytest suite + fixtures/ (synthetic templates)
+e2e/                       browser smoke test + shared UI driver
+scripts/                   portable build, launchers, screenshots.py
 ```
 
 ## License

@@ -1,0 +1,81 @@
+name: Release
+
+# Push an annotated tag vX.Y.Z (equal to __version__) to build and publish
+# both portable packages with SHA-256 checksums. See AGENTS.md "Releasing".
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+
+      - name: Tag must equal the app version
+        shell: pwsh
+        run: |
+          $version = python -c "import pptx_template_tool as p; print(p.__version__)"
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} does not match __version__ $version"
+          }
+          if (-not (Select-String -Path CHANGELOG.md -SimpleMatch "## [$version]" -Quiet)) {
+            throw "CHANGELOG.md has no '## [$version]' section"
+          }
+
+      - name: Test
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m pytest -q tests/
+
+      - name: Build portable packages
+        # Windows PowerShell 5.1, the same shell users run the scripts in
+        shell: powershell
+        run: .\scripts\build-portable.ps1
+
+      - name: Zip and checksum
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Compress-Archive -Path "dist\Retheme" -DestinationPath out\Retheme-portable-exe.zip
+          Compress-Archive -Path "dist\Retheme PowerShell" -DestinationPath out\Retheme-portable-powershell.zip
+          Get-ChildItem out\*.zip | ForEach-Object {
+            "{0}  {1}" -f (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower(), $_.Name
+          } | Set-Content -Encoding ascii out\SHA256SUMS.txt
+          Get-Content out\SHA256SUMS.txt
+
+      - name: Release notes from CHANGELOG
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          # plain StartsWith, not -like: "[" is a wildcard character in -like
+          $lines = @(Get-Content CHANGELOG.md)
+          $start = -1
+          for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i].StartsWith("## [$version]")) { $start = $i; break } }
+          if ($start -lt 0) { throw "CHANGELOG.md has no '## [$version]' section" }
+          $end = $lines.Count
+          for ($i = $start + 1; $i -lt $lines.Count; $i++) { if ($lines[$i].StartsWith("## [")) { $end = $i; break } }
+          $notes = @(
+            "Portable Windows packages: no install, no admin, no Python needed.",
+            "",
+            "- **Retheme-portable-exe.zip**: PyInstaller build; run ``Retheme.exe`` (unsigned, SmartScreen may warn once).",
+            "- **Retheme-portable-powershell.zip**: signed CPython runtime + source; run ``Start Retheme.cmd``. Use this where unsigned executables are blocked.",
+            "- **SHA256SUMS.txt**: checksums of both zips.",
+            ""
+          ) + $lines[($start + 1)..($end - 1)]
+          $notes | Set-Content -Encoding utf8 out\notes.md
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "${{ github.ref_name }}" --title "Retheme ${{ github.ref_name }}"
+          --notes-file out/notes.md
+          out/Retheme-portable-exe.zip out/Retheme-portable-powershell.zip out/SHA256SUMS.txt

@@ -1,0 +1,5 @@
+-r requirements.txt
+pytest>=8
+# browser smoke test (e2e/) and README screenshots (scripts/screenshots.py)
+playwright>=1.45
+axe-playwright-python>=0.1.4

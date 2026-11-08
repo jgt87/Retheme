@@ -1,0 +1,18 @@
+/* Retheme design tokens: the ONLY place colors, radii, type sizes and motion
+   are defined. tests/test_design_rules.py fails on hex colors or off-scale
+   font sizes anywhere else in the UI. See DESIGN.md. */
+:root {
+  color-scheme:light;   /* light only: DESIGN.md defines no dark theme */
+  --ink:#1c1c28; --muted:#6b7280; --line:#e5e7eb; --brand:#10069F;
+  --warn:#b45309; --bg:#f6f7fb;
+  --surface:#fcfdff;                 /* white, nudged toward the brand hue */
+  --on-accent:#ffffff;
+  --error-bg:#fdecec; --error-border:#f5c2c0; --error-text:#b3261e;
+  --focus-ring:0 0 0 3px rgba(16,6,159,.28);   /* Signal Blue, soft */
+  --r-xs:4px; --r-ctrl:5px; --r-thumb:6px; --r-md:8px; --r-lg:10px; --r-pill:999px;
+  --dur:.15s;
+  /* dark stage behind slide previews (slides carry their own colors) */
+  --stage-bg:#333333; --stage-ink:#eeeeee;
+  /* type scale (px): 11 / 12 / 13 / 14 / 16 / 20, nothing else */
+  --fs-xs:11px; --fs-sm:12px; --fs-md:13px; --fs-base:14px; --fs-lg:16px; --fs-xl:20px;
+}

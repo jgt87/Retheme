@@ -11,7 +11,7 @@ from pptx import Presentation
 from pptx.util import Inches, Pt
 
 from pptx_template_tool.application.generator import (css_align, css_font,
-                                                      safe_hex)
+                                                      doc_wrapper, safe_hex)
 from pptx_template_tool.application.preview_render import render_deck_html
 from pptx_template_tool.application.retheme import retheme_pptx
 from pptx_template_tool.ooxml import NS, resolve_color
@@ -136,3 +136,19 @@ def test_malicious_theme_font_does_not_inject_style_block(tmp_path):
 
     assert "</style><script>alert(3)" not in html.lower()
     assert "alert(3)" not in html.lower()
+
+
+def test_document_title_is_escaped():
+    # The title comes from deck text or the uploaded file name: untrusted.
+    out = doc_wrapper({"slide_geometry": {"width_in": 10, "height_in": 7.5}}, [],
+                      "</title><script>alert(3)</script>")
+    assert "<script>alert(3)" not in out
+    assert "<title>&lt;/title&gt;&lt;script&gt;" in out  # escaped once, not twice
+
+
+def test_upload_display_name_is_printable_and_bounded():
+    from pptx_template_tool.webapp.app import _display_name
+    assert _display_name("Q3 Brand.potx") == "Q3 Brand"
+    assert _display_name("a\x00b\nc.pptx") == "abc"
+    assert len(_display_name("x" * 500 + ".pptx")) == 80
+    assert _display_name(None) is None and _display_name("   .pptx") is None

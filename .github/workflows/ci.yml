@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
+  pull_request:
+    paths-ignore: ["**.md", "docs/**", "LICENSE"]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    # Windows first: the portable packages and launchers are Windows-only.
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install
+        run: python -m pip install -r requirements-dev.txt
+      - name: Unit and regression tests
+        run: python -m pytest -q tests/
+      - name: Browser smoke test (workflow + axe)
+        env:
+          RETHEME_E2E_CHANNEL: msedge   # preinstalled on windows runners
+        run: python -m pytest -q e2e/

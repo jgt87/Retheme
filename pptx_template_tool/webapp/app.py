@@ -16,6 +16,7 @@ import time
 import uuid
 import zipfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -72,11 +73,21 @@ async def _reject_cross_origin_writes(request: Request, call_next):
     the UI itself) send no Origin or a localhost one and pass through."""
     if request.method in ("POST", "PUT", "DELETE"):
         origin = request.headers.get("origin")
-        if origin and not origin.startswith(("http://127.0.0.1",
-                                             "http://localhost")):
+        if origin and not _is_local_origin(origin):
             return JSONResponse({"detail": "cross-origin request rejected"},
                                 status_code=403)
     return await call_next(request)
+
+
+def _is_local_origin(origin: str) -> bool:
+    """Parse the Origin and compare the exact host. A prefix check would let
+    http://localhost.evil.example or http://127.0.0.1.evil.example through."""
+    try:
+        parsed = urlsplit(origin)
+    except ValueError:
+        return False
+    return (parsed.scheme == "http"
+            and parsed.hostname in ("127.0.0.1", "localhost", "::1"))
 
 
 def _save_upload(upload: UploadFile, dest: Path) -> None:
@@ -106,14 +117,23 @@ def _safe_child(base: Path, candidate: Path) -> Path:
     return resolved
 
 
-def _run_extraction(job_id: str, pptx_path: Path, out_dir: Path):
+def _display_name(filename: str | None) -> str | None:
+    """The uploaded file's own name, for display only (the upload is stored as
+    source.pptx). Keep printable characters, cap the length."""
+    stem = Path(filename or "").stem
+    stem = "".join(ch for ch in stem if ch.isprintable()).strip()[:80]
+    return stem or None
+
+
+def _run_extraction(job_id: str, pptx_path: Path, out_dir: Path,
+                    name: str | None = None):
     job = JOBS[job_id]
 
     def progress(step, frac):
         job["step"], job["progress"] = step, frac
 
     try:
-        extract_template(pptx_path, out_dir, progress=progress)
+        extract_template(pptx_path, out_dir, progress=progress, name=name)
         job["status"] = "done"
     except Exception as exc:  # surfaced to the UI
         job["status"] = "error"
@@ -135,7 +155,8 @@ async def start_extract(file: UploadFile):
                     "dir": str(out_dir), "source": str(src), "error": None}
     # the package dir is a child of the job dir — evict removes the job dir
     _evict_oldest(JOBS, MAX_JOBS, lambda j: Path(j["dir"]).parent)
-    threading.Thread(target=_run_extraction, args=(job_id, src, out_dir),
+    threading.Thread(target=_run_extraction,
+                     args=(job_id, src, out_dir, _display_name(file.filename)),
                      daemon=True).start()
     return {"job_id": job_id}
 
@@ -516,4 +537,25 @@ def index():
     # single source of truth for the version shown in the header pill;
     # no-store so the UI can never go stale across tool upgrades
     return HTMLResponse(html.replace("{{version}}", __version__),
+                        headers={"Cache-Control": "no-store"})
+
+
+# The UI's own stylesheets and script. A fixed allow-list (not a static mount)
+# so nothing else in the package can be fetched. Paths are relative to
+# index.html, so they resolve the same when served and when opened from disk.
+UI_ASSETS = {"tokens.css": "text/css", "app.css": "text/css",
+             "app.js": "text/javascript", "icon.svg": "image/svg+xml"}
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return ui_asset("icon.svg")
+
+
+@app.get("/{name}")
+def ui_asset(name: str):
+    if name not in UI_ASSETS:
+        raise HTTPException(404, "not found")
+    return FileResponse(Path(__file__).parent / "static" / name,
+                        media_type=UI_ASSETS[name],
                         headers={"Cache-Control": "no-store"})
