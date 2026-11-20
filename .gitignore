@@ -39,3 +39,6 @@ Desktop.ini
 .repowise/events.key
 .repowise/
 .claude/
+
+# Agent lessons: machine-local (C:\Files\Apps\__CommonShared\agent)
+tasks/lessons.md
