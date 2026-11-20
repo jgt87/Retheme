@@ -58,24 +58,68 @@ def _ph_info(sp):
     return {"type": ph.get("type", "obj"), "idx": int(ph.get("idx", 0))}
 
 
+def _is_hidden(c_nv_pr) -> bool:
+    """p:cNvPr/@hidden="1": PowerPoint never renders the shape."""
+    return c_nv_pr is not None and c_nv_pr.get("hidden") == "1"
+
+
+_TITLE_LIKE = frozenset({"title", "ctrTitle"})
+_BODY_LIKE = frozenset({"body", "subTitle", "obj", "pic", "chart", "tbl", "dgm",
+                        "media", "clipArt"})
+_SAME_TYPE_ONLY = frozenset({"dt", "ftr", "sldNum"})
+
+
+def _inheritable_types(ph_type: str) -> frozenset:
+    """Master placeholder types a layout placeholder of ph_type can fall back
+    to when the master has no exact type+idx match."""
+    if ph_type in _TITLE_LIKE:
+        return _TITLE_LIKE
+    if ph_type in _BODY_LIKE:
+        return _BODY_LIKE
+    if ph_type in _SAME_TYPE_ONLY:
+        return frozenset({ph_type})
+    return frozenset()
+
+
 def _match_master_ph(master_el, ph_type: str, idx: int):
     """Find the master placeholder a layout placeholder inherits from."""
-    body_like = {"body", "subTitle", "obj", "pic", "chart", "tbl", "dgm", "media", "clipArt"}
-    title_like = {"title", "ctrTitle"}
-    candidates = []
+    family = _inheritable_types(ph_type)
+    fallback = None
     for sp in findall(master_el, ".//p:cSld/p:spTree/p:sp"):
         info = _ph_info(sp)
         if info is None:
             continue
         if info["type"] == ph_type and info["idx"] == idx:
             return sp  # exact match wins
-        if ph_type in title_like and info["type"] in title_like:
-            candidates.append(sp)
-        elif ph_type in body_like and info["type"] in body_like:
-            candidates.append(sp)
-        elif ph_type in ("dt", "ftr", "sldNum") and info["type"] == ph_type:
-            candidates.append(sp)
-    return candidates[0] if candidates else None
+        if fallback is None and info["type"] in family:
+            fallback = sp  # else the first of the same family, document order
+    return fallback
+
+
+# a:latin/@typeface theme references -> font scheme key
+_THEME_FONT_REFS = {"+mj-lt": "heading", "+mn-lt": "body"}
+
+
+def _latin_face(rpr, font_scheme):
+    """Latin typeface of a run, with theme references resolved; None/"" when
+    the run sets none."""
+    latin = find(rpr, "a:latin")
+    if latin is None:
+        return None
+    face = latin.get("typeface", "")
+    if face in _THEME_FONT_REFS:
+        return font_scheme.get(_THEME_FONT_REFS[face])
+    return face
+
+
+def _rpr_color_props(rpr, theme_colors, clr_map) -> dict:
+    color = resolve_color(find(rpr, "a:solidFill"), theme_colors, clr_map)
+    if not color:
+        return {}
+    out = {"color": color["hex"]}
+    if color.get("theme_slot"):
+        out["color_theme_slot"] = color["theme_slot"]
+    return out
 
 
 def _rpr_props(rpr, theme_colors, clr_map, font_scheme):
@@ -85,25 +129,13 @@ def _rpr_props(rpr, theme_colors, clr_map, font_scheme):
     out = {}
     if rpr.get("sz"):
         out["size_pt"] = centipt_to_pt(int(rpr.get("sz")))
-    if rpr.get("b") is not None:
-        out["bold"] = rpr.get("b") == "1"
-    if rpr.get("i") is not None:
-        out["italic"] = rpr.get("i") == "1"
-    latin = find(rpr, "a:latin")
-    if latin is not None:
-        face = latin.get("typeface", "")
-        if face == "+mj-lt":
-            face = font_scheme.get("heading")
-        elif face == "+mn-lt":
-            face = font_scheme.get("body")
-        if face:
-            out["font"] = face
-    fill = find(rpr, "a:solidFill")
-    color = resolve_color(fill, theme_colors, clr_map)
-    if color:
-        out["color"] = color["hex"]
-        if color.get("theme_slot"):
-            out["color_theme_slot"] = color["theme_slot"]
+    for attr, key in (("b", "bold"), ("i", "italic")):
+        if rpr.get(attr) is not None:
+            out[key] = rpr.get(attr) == "1"
+    face = _latin_face(rpr, font_scheme)
+    if face:
+        out["font"] = face
+    out.update(_rpr_color_props(rpr, theme_colors, clr_map))
     return out
 
 
@@ -158,16 +190,36 @@ def _merge_levels(*level_dicts: dict[int, dict]) -> dict[int, dict]:
     return out
 
 
+def _tx_style_name(ph_type) -> str:
+    """The master p:txStyles child that governs a placeholder type."""
+    if ph_type in ("title", "ctrTitle"):
+        return "p:titleStyle"
+    if ph_type in ("body", "subTitle", "obj"):
+        return "p:bodyStyle"
+    return "p:otherStyle"
+
+
+def _inherit_from_level1(levels: dict[int, dict]) -> None:
+    """Deeper levels that set no font/color of their own take level 1's."""
+    base = levels.get(1)
+    if base is None:
+        return
+    for n, props in levels.items():
+        if n == 1:
+            continue
+        for key in ("font", "color"):
+            props.setdefault(key, base.get(key))
+
+
 def _resolve_ph_format(ph_type, layout_sp, master_sp, master_el,
                        theme_colors, clr_map, font_scheme) -> dict[int, dict]:
     """Resolution order: theme defaults < master txStyles < master ph lstStyle
     < layout ph lstStyle."""
-    title_like = ph_type in ("title", "ctrTitle")
-    style_name = "p:titleStyle" if title_like else (
-        "p:bodyStyle" if ph_type in ("body", "subTitle", "obj") else "p:otherStyle")
+    style_name = _tx_style_name(ph_type)
     tx_styles = find(master_el, f".//p:txStyles/{style_name}")
 
-    base_font = font_scheme.get("heading") if title_like else font_scheme.get("body")
+    base_font = font_scheme.get(
+        "heading" if style_name == "p:titleStyle" else "body")
     defaults = {1: {"font": base_font}} if base_font else {}
 
     master_lst = find(master_sp, ".//a:lstStyle") if master_sp is not None else None
@@ -178,13 +230,21 @@ def _resolve_ph_format(ph_type, layout_sp, master_sp, master_el,
         _lst_style_levels(master_lst, theme_colors, clr_map, font_scheme),
         _lst_style_levels(layout_lst, theme_colors, clr_map, font_scheme),
     )
-    # inherit missing font down levels from level 1
-    if 1 in merged:
-        for n, props in merged.items():
-            if n != 1:
-                for key in ("font", "color"):
-                    props.setdefault(key, merged[1].get(key))
+    _inherit_from_level1(merged)
     return merged
+
+
+# spTree children that take a z-order slot; anything else (nvGrpSpPr,
+# grpSpPr, extLst) is not a drawn shape
+_Z_ORDERED_TAGS = ("sp", "pic", "grpSp", "graphicFrame", "cxnSp")
+
+
+def _ph_xfrm(sp, master_sp):
+    """A placeholder's own geometry, else the one it inherits from the master."""
+    xfrm = parse_xfrm(find(sp, "p:spPr"))
+    if (xfrm is None or xfrm.get("x") is None) and master_sp is not None:
+        return parse_xfrm(find(master_sp, "p:spPr")) or xfrm
+    return xfrm
 
 
 def extract_placeholders(layout_el, master_el, slide_w, slide_h,
@@ -193,25 +253,21 @@ def extract_placeholders(layout_el, master_el, slide_w, slide_h,
     sp_tree = find(layout_el, ".//p:cSld/p:spTree")
     z = 0
     for sp in sp_tree:
-        if etree.QName(sp).localname != "sp":
-            if etree.QName(sp).localname in ("pic", "grpSp", "graphicFrame", "cxnSp"):
-                z += 1
+        tag = etree.QName(sp).localname
+        if tag in _Z_ORDERED_TAGS:
+            z += 1
+        if tag != "sp":
             continue
-        z += 1
         info = _ph_info(sp)
         if info is None:
             continue  # non-placeholder shapes handled by asset extraction
-        name_el_pre = find(sp, ".//p:nvSpPr/p:cNvPr")
-        if name_el_pre is not None and name_el_pre.get("hidden") == "1":
+        name_el = find(sp, ".//p:nvSpPr/p:cNvPr")
+        if _is_hidden(name_el):
             continue  # hidden placeholders are never rendered
         master_sp = _match_master_ph(master_el, info["type"], info["idx"])
-        xfrm = parse_xfrm(find(sp, "p:spPr"))
-        if (xfrm is None or xfrm.get("x") is None) and master_sp is not None:
-            m_xfrm = parse_xfrm(find(master_sp, "p:spPr"))
-            xfrm = m_xfrm or xfrm
+        xfrm = _ph_xfrm(sp, master_sp)
         fmt = _resolve_ph_format(info["type"], sp, master_sp, master_el,
                                  theme_colors, clr_map, font_scheme)
-        name_el = find(sp, ".//p:nvSpPr/p:cNvPr")
         entry = {
             "name": name_el.get("name") if name_el is not None else None,
             "type": info["type"],
@@ -247,6 +303,55 @@ def _size_dict(xfrm, slide_w, slide_h):
 
 # ------------------------------------------------------------- static text
 
+def _paragraph_texts(tx_body) -> list[str]:
+    """Stripped text of each non-blank paragraph."""
+    texts = []
+    for para in findall(tx_body, "a:p"):
+        text = "".join(t.text or "" for t in para.iter(q("a:t"))).strip()
+        if text:
+            texts.append(text)
+    return texts
+
+
+def _static_text_format(tx_body, theme_colors, clr_map, font_scheme) -> dict:
+    """Formatting from the first run of the first paragraph, plus that
+    paragraph's alignment."""
+    first_p = find(tx_body, "a:p")
+    fmt = _rpr_props(find(first_p, "a:r/a:rPr"), theme_colors, clr_map, font_scheme)
+    ppr = _ppr_props(find(first_p, "a:pPr"), theme_colors, clr_map)
+    if "align" in ppr:
+        fmt["align"] = ppr["align"]
+    return fmt
+
+
+def _static_text_record(sp, slide_w, slide_h, theme_colors, clr_map,
+                        font_scheme) -> dict | None:
+    """The record for one shape, or None when it is not visible static text
+    (a placeholder, hidden, without text, or without a position and size)."""
+    if _ph_info(sp) is not None:
+        return None
+    name_el = find(sp, ".//p:nvSpPr/p:cNvPr")
+    if _is_hidden(name_el):
+        return None
+    tx_body = find(sp, "p:txBody")
+    if tx_body is None:
+        return None
+    paragraphs = _paragraph_texts(tx_body)
+    if not paragraphs:
+        return None
+    xfrm = parse_xfrm(find(sp, "p:spPr"))
+    pos = _pos_dict(xfrm, slide_w, slide_h)
+    size = _size_dict(xfrm, slide_w, slide_h)
+    if pos is None or size is None:
+        return None
+    return {
+        "name": name_el.get("name") if name_el is not None else None,
+        "paragraphs": paragraphs,
+        "position": pos, "size": size,
+        "format": _static_text_format(tx_body, theme_colors, clr_map, font_scheme),
+    }
+
+
 def extract_static_texts(tree_el, slide_w, slide_h, theme_colors, clr_map,
                          font_scheme) -> list[dict]:
     """Non-placeholder text shapes that are part of the layout's furniture
@@ -255,43 +360,73 @@ def extract_static_texts(tree_el, slide_w, slide_h, theme_colors, clr_map,
     if tree_el is None:
         return out
     for sp in findall(tree_el, "p:sp"):
-        if _ph_info(sp) is not None:
-            continue
-        name_el = find(sp, ".//p:nvSpPr/p:cNvPr")
-        if name_el is not None and name_el.get("hidden") == "1":
-            continue
-        tx_body = find(sp, "p:txBody")
-        if tx_body is None:
-            continue
-        paragraphs = []
-        for para in findall(tx_body, "a:p"):
-            text = "".join(t.text or "" for t in para.iter(q("a:t"))).strip()
-            if text:
-                paragraphs.append(text)
-        if not paragraphs:
-            continue
-        xfrm = parse_xfrm(find(sp, "p:spPr"))
-        pos = _pos_dict(xfrm, slide_w, slide_h)
-        size = _size_dict(xfrm, slide_w, slide_h)
-        if pos is None or size is None:
-            continue
-        # formatting from the first run of the first paragraph
-        first_p = find(tx_body, "a:p")
-        rpr = find(first_p, "a:r/a:rPr")
-        fmt = _rpr_props(rpr, theme_colors, clr_map, font_scheme)
-        fmt.update({k: v for k, v in _ppr_props(
-            find(first_p, "a:pPr"), theme_colors, clr_map).items()
-            if k == "align"})
-        out.append({
-            "name": name_el.get("name") if name_el is not None else None,
-            "paragraphs": paragraphs,
-            "position": pos, "size": size,
-            "format": fmt,
-        })
+        record = _static_text_record(sp, slide_w, slide_h, theme_colors,
+                                     clr_map, font_scheme)
+        if record is not None:
+            out.append(record)
     return out
 
 
 # --------------------------------------------------------------- background
+
+def _bg_from_props(bg_pr, origin, theme_colors, clr_map):
+    """Background from an explicit p:bgPr fill; None when it carries none of
+    the fills handled here, so the caller keeps looking."""
+    solid = find(bg_pr, "a:solidFill")
+    if solid is not None:
+        c = resolve_color(solid, theme_colors, clr_map)
+        return ({"type": "solid", "hex": (c or {}).get("hex", "FFFFFF"),
+                 "source": origin}, None)
+    grad = find(bg_pr, "a:gradFill")
+    if grad is not None:
+        g = _summarize_gradient(grad, theme_colors, clr_map)
+        g["source"] = origin
+        return (g, None)
+    blip_fill = find(bg_pr, "a:blipFill")
+    if blip_fill is not None:
+        blip = find(blip_fill, "a:blip")
+        return ({"type": "image", "source": origin,
+                 "asset_id": None}, (blip, origin))
+    return None
+
+
+def _scheme_fill(idx: int, fmt_scheme):
+    """The theme format-scheme fill a p:bgRef/@idx points at: 1001+ indexes
+    the background fill list, 1-999 the ordinary fill list. An index past the
+    end takes the last fill."""
+    if idx >= 1001 and fmt_scheme.get("bg_fills"):
+        pool = fmt_scheme["bg_fills"]
+        return pool[min(idx - 1001, len(pool) - 1)]
+    if 1 <= idx <= 999 and fmt_scheme.get("fills"):
+        pool = fmt_scheme["fills"]
+        return pool[min(idx - 1, len(pool) - 1)]
+    return None
+
+
+def _bg_from_ref(bg_ref, origin, theme_colors, clr_map, fmt_scheme):
+    """Background from a p:bgRef theme reference."""
+    c = resolve_color(bg_ref, theme_colors, clr_map)
+    fill = _scheme_fill(int(bg_ref.get("idx", 0)), fmt_scheme)
+    if fill and fill.get("type") == "gradient":
+        out = dict(fill)
+        out["source"] = f"{origin}:bgRef"
+        return (out, None)
+    hex_val = (c or {}).get("hex") or (fill or {}).get("hex") or "FFFFFF"
+    return ({"type": "solid", "hex": hex_val, "source": f"{origin}:bgRef"}, None)
+
+
+def _bg_from_element(bg, origin, theme_colors, clr_map, fmt_scheme):
+    """Background a p:bg defines, bgPr before bgRef; None when neither does."""
+    bg_pr = find(bg, "p:bgPr")
+    if bg_pr is not None:
+        result = _bg_from_props(bg_pr, origin, theme_colors, clr_map)
+        if result is not None:
+            return result
+    bg_ref = find(bg, "p:bgRef")
+    if bg_ref is not None:
+        return _bg_from_ref(bg_ref, origin, theme_colors, clr_map, fmt_scheme)
+    return None
+
 
 def extract_background(layout_el, master_el, theme_colors, clr_map,
                        fmt_scheme) -> tuple[dict, object | None]:
@@ -302,38 +437,7 @@ def extract_background(layout_el, master_el, theme_colors, clr_map,
         bg = find(el, ".//p:cSld/p:bg")
         if bg is None:
             continue
-        bg_pr = find(bg, "p:bgPr")
-        if bg_pr is not None:
-            solid = find(bg_pr, "a:solidFill")
-            if solid is not None:
-                c = resolve_color(solid, theme_colors, clr_map)
-                return ({"type": "solid", "hex": (c or {}).get("hex", "FFFFFF"),
-                         "source": origin}, None)
-            grad = find(bg_pr, "a:gradFill")
-            if grad is not None:
-                g = _summarize_gradient(grad, theme_colors, clr_map)
-                g["source"] = origin
-                return (g, None)
-            blip_fill = find(bg_pr, "a:blipFill")
-            if blip_fill is not None:
-                blip = find(blip_fill, "a:blip")
-                return ({"type": "image", "source": origin,
-                         "asset_id": None}, (blip, origin))
-        bg_ref = find(bg, "p:bgRef")
-        if bg_ref is not None:
-            idx = int(bg_ref.get("idx", 0))
-            c = resolve_color(bg_ref, theme_colors, clr_map)
-            fill = None
-            if idx >= 1001 and fmt_scheme.get("bg_fills"):
-                pool = fmt_scheme["bg_fills"]
-                fill = pool[min(idx - 1001, len(pool) - 1)]
-            elif 1 <= idx <= 999 and fmt_scheme.get("fills"):
-                pool = fmt_scheme["fills"]
-                fill = pool[min(idx - 1, len(pool) - 1)]
-            if fill and fill.get("type") == "gradient":
-                out = dict(fill)
-                out["source"] = f"{origin}:bgRef"
-                return (out, None)
-            hex_val = (c or {}).get("hex") or (fill or {}).get("hex") or "FFFFFF"
-            return ({"type": "solid", "hex": hex_val, "source": f"{origin}:bgRef"}, None)
+        result = _bg_from_element(bg, origin, theme_colors, clr_map, fmt_scheme)
+        if result is not None:
+            return result
     return ({"type": "solid", "hex": "FFFFFF", "source": "default"}, None)

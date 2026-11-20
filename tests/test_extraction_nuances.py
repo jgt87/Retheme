@@ -313,6 +313,64 @@ def test_group_flip_mirrors_children(tmp_path):
     assert abs(line["position"]["x_in"] - 1.0) < 0.01
 
 
+def _text_shape(name: str, text_xml: str, xfrm: bool = True,
+                hidden: bool = False) -> str:
+    geometry = ('<a:xfrm><a:off x="914400" y="457200"/>'
+                '<a:ext cx="1828800" cy="457200"/></a:xfrm>') if xfrm else ''
+    hidden_attr = ' hidden="1"' if hidden else ''
+    return (f'<p:sp><p:nvSpPr><p:cNvPr id="940" name="{name}"{hidden_attr}/>'
+            f'<p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr>{geometry}</p:spPr>'
+            f'<p:txBody><a:bodyPr/>{text_xml}</p:txBody></p:sp>')
+
+
+def test_static_text_records(tmp_path):
+    """Layout furniture text: blank paragraphs dropped, hidden and
+    unpositioned shapes skipped, format from the first run plus alignment."""
+    caption = _text_shape(
+        "Caption",
+        '<a:p><a:pPr algn="ctr" marL="91440"/><a:r><a:rPr sz="1200" b="1" i="0">'
+        '<a:latin typeface="+mj-lt"/><a:solidFill><a:schemeClr val="accent1"/>'
+        '</a:solidFill></a:rPr><a:t>Fictional caption</a:t></a:r></a:p>'
+        '<a:p><a:r><a:t>  </a:t></a:r></a:p>'
+        '<a:p><a:r><a:t>Line two</a:t></a:r></a:p>')
+    one_line = '<a:p><a:r><a:t>never shown</a:t></a:r></a:p>'
+    shapes = (caption + _text_shape("Hidden Note", one_line, hidden=True)
+              + _text_shape("No Geometry", one_line, xfrm=False))
+    pptx = build_template(tmp_path, layout1_shapes=shapes)
+    manifest, _ = extract(tmp_path, pptx)
+    texts = manifest["layouts"][0]["static_texts"]
+    assert [t["name"] for t in texts] == ["Caption"]
+    record = texts[0]
+    assert list(record) == ["name", "paragraphs", "position", "size", "format"]
+    assert record["paragraphs"] == ["Fictional caption", "Line two"]
+    assert abs(record["position"]["x_in"] - 1.0) < 0.01
+    fmt = record["format"]
+    # indent/bullet of the paragraph are not part of a static text's format
+    assert list(fmt) == ["size_pt", "bold", "italic", "font", "color",
+                         "color_theme_slot", "align"]
+    assert (fmt["size_pt"], fmt["bold"], fmt["italic"]) == (12.0, True, False)
+    assert fmt["font"] == manifest["fonts"]["heading"]
+    assert fmt["color_theme_slot"] == "accent1" and fmt["align"] == "center"
+
+
+def test_background_fallbacks(tmp_path):
+    """A layout bgPr without a usable fill defers to the master; a bgRef on
+    the layout is resolved there and labelled as such."""
+    for sub in ("a", "b"):
+        (tmp_path / sub).mkdir()
+    empty = build_template(tmp_path / "a", layout1_bg=(
+        '<p:bg><p:bgPr><a:noFill/></p:bgPr></p:bg>'))
+    manifest, _ = extract(tmp_path / "a", empty)
+    assert manifest["layouts"][0]["background"] == manifest["layouts"][1]["background"]
+    assert manifest["layouts"][0]["background"]["source"].startswith("master")
+
+    ref = build_template(tmp_path / "b", layout1_bg=(
+        '<p:bg><p:bgRef idx="0"><a:srgbClr val="14213D"/></p:bgRef></p:bg>'))
+    manifest, _ = extract(tmp_path / "b", ref)
+    assert manifest["layouts"][0]["background"] == {
+        "type": "solid", "hex": "14213D", "source": "layout:bgRef"}
+
+
 def _pic(name: str, x, y, cx, cy, rid: str) -> str:
     """A true p:pic element (p:blipFill, not a:blipFill)."""
     return (f'<p:pic><p:nvPicPr><p:cNvPr id="930" name="{name}"/>'

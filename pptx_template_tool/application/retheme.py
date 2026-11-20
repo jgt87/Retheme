@@ -26,6 +26,7 @@ import re
 import shutil
 import tempfile
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 from lxml import etree
@@ -154,19 +155,20 @@ def _hls_hex(h: float, l: float, s: float) -> str:
     return "%02X%02X%02X" % (round(r * 255), round(g * 255), round(b * 255))
 
 
-def color_clusters(src_prs, protected: set[str]) -> list[dict]:
-    """Group the deck's hard-coded chromatic colors into hue families.
-    Returns clusters sorted by usage weight (dominant first), each with a
-    stable id: {"id", "hue_deg", "weight", "colors": {hex: count},
-    "dominant": bool}. Neutrals and brand colors are excluded.
-    """
+def _hardcoded_color_counts(src_prs) -> Counter:
+    """Usage count of every literal 6-digit srgbClr on the deck's slides."""
     counts: Counter = Counter()
     for slide in src_prs.slides:
         for el in slide._element.iter(f"{{{A_NS}}}srgbClr"):
             val = (el.get("val") or "").upper()
             if len(val) == 6:
                 counts[val] += 1
+    return counts
 
+
+def _chromatic_colors(counts: Counter, protected: set[str]
+                      ) -> dict[str, tuple[float, float, float, int]]:
+    """{hex: (h, l, s, count)} for the colors that carry a hue of their own."""
     chroma: dict[str, tuple[float, float, float, int]] = {}
     for val, n in counts.items():
         if val in protected:
@@ -175,6 +177,16 @@ def color_clusters(src_prs, protected: set[str]) -> list[dict]:
         if s < 0.15 or l < 0.06 or l > 0.98:
             continue  # neutral / near-black / near-white
         chroma[val] = (h, l, s, n)
+    return chroma
+
+
+def color_clusters(src_prs, protected: set[str]) -> list[dict]:
+    """Group the deck's hard-coded chromatic colors into hue families.
+    Returns clusters sorted by usage weight (dominant first), each with a
+    stable id: {"id", "hue_deg", "weight", "colors": {hex: count},
+    "dominant": bool}. Neutrals and brand colors are excluded.
+    """
+    chroma = _chromatic_colors(_hardcoded_color_counts(src_prs), protected)
     if not chroma:
         return []
 
@@ -242,6 +254,17 @@ def _rewrite_rids(blob: bytes, rid_map: dict[str, str]) -> bytes:
                           standalone=True)
 
 
+def _remap_typefaces(root, font_map: dict[str, str]) -> bool:
+    changed = False
+    for tag in ("latin", "ea", "cs"):
+        for el in root.iter(f"{{{A_NS}}}{tag}"):
+            face = el.get("typeface")
+            if face in font_map and font_map[face] != face:
+                el.set("typeface", font_map[face])
+                changed = True
+    return changed
+
+
 def _restyle_tree(root, color_map: dict[str, str],
                   font_map: dict[str, str]) -> bool:
     """Remap hard-coded formatting that matches the SOURCE theme to the
@@ -253,13 +276,8 @@ def _restyle_tree(root, color_map: dict[str, str],
         if val in color_map and color_map[val] != val:
             el.set("val", color_map[val])
             changed = True
-    if font_map:
-        for tag in ("latin", "ea", "cs"):
-            for el in root.iter(f"{{{A_NS}}}{tag}"):
-                face = el.get("typeface")
-                if face in font_map and font_map[face] != face:
-                    el.set("typeface", font_map[face])
-                    changed = True
+    if font_map and _remap_typefaces(root, font_map):
+        changed = True
     return changed
 
 
@@ -293,12 +311,20 @@ def _freeze_theme(root, theme_colors: dict, theme_fonts: dict) -> None:
     schemeClr -> srgbClr(source hex), keeping any tint/shade/lum modifier
     children; theme font refs (+mj-*/+mn-*) -> the source theme's actual
     typefaces. Used for "fully retain original look" protected slides."""
+    _freeze_scheme_colors(root, theme_colors)
+    _freeze_theme_fonts(root, theme_fonts)
+
+
+def _freeze_scheme_colors(root, theme_colors: dict) -> None:
     for el in list(root.iter(f"{{{A_NS}}}schemeClr")):
         hexv = theme_colors.get(_SCHEME_TO_SLOT.get(el.get("val")))
         if not hexv:
             continue  # phClr / hlink / unknown: leave for the theme to resolve
         el.tag = f"{{{A_NS}}}srgbClr"      # keeps children (lumMod/tint/shade…)
         el.set("val", hexv)
+
+
+def _freeze_theme_fonts(root, theme_fonts: dict) -> None:
     major, minor = theme_fonts.get("major"), theme_fonts.get("minor")
     for tag in ("latin", "ea", "cs"):
         for el in root.iter(f"{{{A_NS}}}{tag}"):
@@ -328,16 +354,18 @@ _TITLE_PH_TYPES = {"title", "ctrTitle", "subTitle"}
 HEADING_MIN_CENTIPT = 2000  # runs >= 20pt in plain text boxes count as headings
 
 
-def deck_has_textbox_headings(src_prs) -> bool:
-    for slide in src_prs.slides:
-        for sp in slide._element.iter(f"{{{P_NS}}}sp"):
-            if sp.find(f".//{{{P_NS}}}ph") is not None:
-                continue
-            for rpr in sp.iter(f"{{{A_NS}}}rPr"):
-                sz = rpr.get("sz")
-                if sz and int(sz) >= HEADING_MIN_CENTIPT:
-                    return True
+def _has_heading_run(sp) -> bool:
+    for rpr in sp.iter(f"{{{A_NS}}}rPr"):
+        sz = rpr.get("sz")
+        if sz and int(sz) >= HEADING_MIN_CENTIPT:
+            return True
     return False
+
+
+def deck_has_textbox_headings(src_prs) -> bool:
+    return any(sp.find(f".//{{{P_NS}}}ph") is None and _has_heading_run(sp)
+               for slide in src_prs.slides
+               for sp in slide._element.iter(f"{{{P_NS}}}sp"))
 
 
 def _set_run_color(rpr, hex_color: str) -> None:
@@ -358,6 +386,14 @@ def _set_run_color(rpr, hex_color: str) -> None:
                 el.addprevious(solid)
                 break
     etree.SubElement(solid, f"{{{A_NS}}}srgbClr").set("val", hex_color)
+
+
+def _set_run_typeface(rpr, typeface: str) -> None:
+    latin = rpr.find(f"{{{A_NS}}}latin")
+    if latin is not None:
+        latin.set("typeface", typeface)
+    else:
+        etree.SubElement(rpr, f"{{{A_NS}}}latin").set("typeface", typeface)
 
 
 def _heading_boxes(sld_el) -> list:
@@ -426,11 +462,7 @@ def _restyle_heading_runs(sp, title_fmt: dict, heading_font: str | None,
         # otherwise the font decision would have no visible effect on headings
         kept = latin is not None and latin.get("typeface") in keep_fonts
         if heading_font and not kept:
-            if latin is not None:
-                latin.set("typeface", heading_font)
-            else:
-                etree.SubElement(rpr, f"{{{A_NS}}}latin").set(
-                    "typeface", heading_font)
+            _set_run_typeface(rpr, heading_font)
         if color:
             _set_run_color(rpr, color)
 
@@ -506,13 +538,31 @@ def _restyle_all_runs(sp, fmt: dict, font: str | None) -> None:
         if fmt.get("size_pt"):
             rpr.set("sz", str(round(fmt["size_pt"] * 100)))
         if font:
-            latin = rpr.find(f"{{{A_NS}}}latin")
-            if latin is not None:
-                latin.set("typeface", font)
-            else:
-                etree.SubElement(rpr, f"{{{A_NS}}}latin").set("typeface", font)
+            _set_run_typeface(rpr, font)
         if fmt.get("color"):
             _set_run_color(rpr, fmt["color"])
+
+
+def _title_zone_text_boxes(sld_el, primary, title_geom, colored_rects) -> list:
+    """Relocatable non-placeholder text boxes (other than the primary
+    heading) that overlap the brandkit title zone."""
+    out = []
+    for sp in sld_el.iter(f"{{{P_NS}}}sp"):
+        if sp is primary or sp.find(f".//{{{P_NS}}}ph") is not None:
+            continue
+        if not _is_top_level_sp(sp):
+            continue  # grouped: coords not slide-absolute, cannot relocate
+        if sp.find(f"{{{P_NS}}}txBody") is None:
+            continue
+        if _on_colored_shape(sp, colored_rects):
+            continue  # stays with its shape
+        text = "".join(t.text or "" for t in sp.iter(f"{{{A_NS}}}t")).strip()
+        if not text:
+            continue
+        rect = _shape_rect(sp)
+        if rect and _rects_intersect(rect, title_geom):
+            out.append(sp)
+    return out
 
 
 def _apply_heading_style(sld_el, title_fmt: dict, heading_font: str | None,
@@ -558,22 +608,8 @@ def _apply_heading_style(sld_el, title_fmt: dict, heading_font: str | None,
     primary = sorted(movable, key=lambda b: (-b[1], b[2]))[0][0]
     # find secondary text boxes currently occupying the title target zone,
     # BEFORE anything moves
-    secondaries = []
-    for sp in sld_el.iter(f"{{{P_NS}}}sp"):
-        if sp is primary or sp.find(f".//{{{P_NS}}}ph") is not None:
-            continue
-        if not _is_top_level_sp(sp):
-            continue  # grouped: coords not slide-absolute, cannot relocate
-        if sp.find(f"{{{P_NS}}}txBody") is None:
-            continue
-        if _on_colored_shape(sp, colored_rects):
-            continue  # stays with its shape
-        text = "".join(t.text or "" for t in sp.iter(f"{{{A_NS}}}t")).strip()
-        if not text:
-            continue
-        rect = _shape_rect(sp)
-        if rect and _rects_intersect(rect, title_geom):
-            secondaries.append(sp)
+    secondaries = _title_zone_text_boxes(sld_el, primary, title_geom,
+                                         colored_rects)
 
     _move_shape(primary, title_geom)
     if sub_geom:
@@ -591,15 +627,22 @@ def _adopt_brand_title_sizes(sld_el) -> bool:
         ph = sp.find(f".//{{{P_NS}}}ph")
         if ph is None or ph.get("type") not in _TITLE_PH_TYPES:
             continue
-        for el in sp.iter():
-            local = etree.QName(el).localname
-            if local in ("rPr", "endParaRPr", "defRPr") and el.get("sz"):
-                del el.attrib["sz"]
+        if _strip_explicit_sizes(sp):
+            changed = True
+    return changed
+
+
+def _strip_explicit_sizes(sp) -> bool:
+    changed = False
+    for el in sp.iter():
+        local = etree.QName(el).localname
+        if local in ("rPr", "endParaRPr", "defRPr") and el.get("sz"):
+            del el.attrib["sz"]
+            changed = True
+        elif local == "normAutofit":
+            if el.attrib.pop("fontScale", None) is not None:
                 changed = True
-            elif local == "normAutofit":
-                if el.attrib.pop("fontScale", None) is not None:
-                    changed = True
-                el.attrib.pop("lnSpcReduction", None)
+            el.attrib.pop("lnSpcReduction", None)
     return changed
 
 
@@ -784,6 +827,342 @@ def _pick_layout(src_slide, layouts_by_name: dict, manifest: dict,
     return layout
 
 
+def _load_manifest(package_dir: Path) -> tuple[dict, Path]:
+    """The package manifest and the path of its embedded source template."""
+    manifest = json.loads(
+        (package_dir / "template.json").read_text(encoding="utf-8"))
+    source_rel = manifest.get("source_template")
+    source_path = package_dir / source_rel if source_rel else None
+    if not source_path or not source_path.is_file():
+        raise FileNotFoundError("package has no embedded source template")
+    return manifest, source_path
+
+
+def _resize_factor(src, dest, choices: dict,
+                   warnings: list[str]) -> float | None:
+    """Slide-size mismatch: keep positions (default, transparent) or, when
+    the user opts in with resize="fit", uniformly scale content to fit the
+    brand canvas (uniform factor so nothing is stretched/distorted)."""
+    if (src.slide_width, src.slide_height) == \
+            (dest.slide_width, dest.slide_height):
+        return None
+    if choices.get("resize", "keep") == "fit" \
+            and src.slide_width and src.slide_height:
+        scale_factor = min(dest.slide_width / src.slide_width,
+                           dest.slide_height / src.slide_height)
+        warnings.append(
+            "content deck and brandkit have different slide sizes "
+            f"({src.slide_width}x{src.slide_height} vs "
+            f"{dest.slide_width}x{dest.slide_height} EMU): content "
+            f"scaled by {scale_factor:.3f} to fit the brand canvas")
+        return scale_factor
+    warnings.append(
+        "content deck and brandkit have different slide sizes "
+        f"({src.slide_width}x{src.slide_height} vs "
+        f"{dest.slide_width}x{dest.slide_height} EMU): retained "
+        "content keeps its absolute positions and may need "
+        "adjustment in PowerPoint")
+    return None
+
+
+def _layouts_by_name(dest) -> dict:
+    out = {}
+    for master in dest.slide_masters:
+        for layout in master.slide_layouts:
+            out.setdefault(layout.name, layout)
+    return out
+
+
+def _build_color_map(src, src_themes: list[dict], dest_theme: dict,
+                     manifest: dict, choices: dict,
+                     warnings: list[str]) -> dict[str, str]:
+    """Source hex -> brand hex for hard-coded colors: source-theme colors map
+    to the brand theme's same slot, and off-theme color families the user
+    (or the default) marked "rebrand" are harmonized onto the brand primary.
+    Default: only the dominant color family is rebranded."""
+    theme_color_map = _source_theme_color_map(src_themes, dest_theme)
+    primary = next((c["hex"] for c in manifest.get("colors", [])
+                    if c.get("role") == "primary"), None) \
+        or dest_theme.get("accent1")
+    if not primary:
+        return theme_color_map
+    protected = set(dest_theme.values()) | set(theme_color_map.values())
+    clusters = color_clusters(src, protected)
+    rebrand_ids = {
+        c["id"] for c in clusters
+        if choices.get(c["id"], "rebrand" if c["dominant"] else
+                       "keep") == "rebrand"}
+    harmony = _harmonization_map(clusters, primary, rebrand_ids)
+    if not harmony:
+        return theme_color_map
+    warnings.append(
+        f"{len(harmony)} hard-coded color(s) recolored to the "
+        f"brand primary (#{primary})")
+    # theme-derived mappings take precedence over harmonization
+    return {**harmony, **theme_color_map}
+
+
+def _build_font_map(src, src_fonts_list: list[dict], dest_fonts: dict,
+                    choices: dict) -> tuple[dict[str, str], frozenset]:
+    """Source typeface -> brand typeface, plus the faces the user keeps.
+    Foreign hard-coded fonts map to the brand body font unless the user chose
+    to keep them. Kept faces are also protected from the heading restyle, so
+    the choice actually shows on headings."""
+    font_map = _source_theme_font_map(src_fonts_list, dest_fonts)
+    exclude = {f for sf in src_fonts_list for f in sf.values()} \
+        | set(dest_fonts.values())
+    keep_fonts: set[str] = set()
+    for face in collect_hardcoded_fonts(src, exclude):
+        if choices.get(f"font:{face}", "map") == "map" \
+                and dest_fonts.get("minor"):
+            font_map[face] = dest_fonts["minor"]
+        else:
+            keep_fonts.add(face)
+    return font_map, frozenset(keep_fonts)
+
+
+def _title_ph_of(layout_rec: dict):
+    for ph in layout_rec.get("placeholders", []):
+        if ph["type"] in ("title", "ctrTitle") and \
+                ph.get("format_levels", {}).get("1"):
+            return ph
+    return None
+
+
+def _sub_ph_of(layout_rec: dict):
+    for ph in layout_rec.get("placeholders", []):
+        if ph["type"] == "subTitle":
+            return ph
+    return None
+
+
+def _geom_of(ph: dict) -> tuple[int, int, int, int] | None:
+    pos, size = ph.get("position"), ph.get("size")
+    if not pos or not size:
+        return None
+    return (round(pos["x_in"] * 914400), round(pos["y_in"] * 914400),
+            round(size["width_in"] * 914400),
+            round(size["height_in"] * 914400))
+
+
+@dataclass(frozen=True)
+class _HeadingPlan:
+    """How text-box headings are restyled, resolved once per run from the
+    manifest and the user's choices."""
+    mode: str                      # "convert" | "adopt" | "keep"
+    manifest_layouts: dict         # layout name -> manifest layout record
+    heading_font: str | None
+    body_font: str | None
+    default_title_ph: dict | None
+    default_sub_fmt: dict
+    keep_fonts: frozenset
+
+
+def _build_heading_plan(manifest: dict, choices: dict, dest_fonts: dict,
+                        keep_fonts: frozenset) -> _HeadingPlan:
+    # brandkit-wide title/subtitle styles, for slides landing on layouts
+    # that have no such placeholder of their own (e.g. Blank)
+    default_title_ph = next(
+        (ph for l in manifest.get("layouts", [])
+         if (ph := _title_ph_of(l))), None)
+    default_sub_ph = next(
+        (ph for l in manifest.get("layouts", [])
+         if (ph := _sub_ph_of(l))), None)
+    return _HeadingPlan(
+        # "convert" (restyle + move to title position), "adopt" (restyle in
+        # place), or "keep"
+        mode=choices.get("heading_style", "convert"),
+        manifest_layouts={l["name"]: l for l in manifest.get("layouts", [])},
+        heading_font=dest_fonts.get("major") or dest_fonts.get("minor"),
+        body_font=dest_fonts.get("minor"),
+        default_title_ph=default_title_ph,
+        default_sub_fmt=(default_sub_ph or {}).get(
+            "format_levels", {}).get("1", {"size_pt": 14}),
+        keep_fonts=keep_fonts)
+
+
+def _heading_slots(title_ph: dict, layout_rec: dict, default_sub_fmt: dict):
+    """(title geometry, subtitle geometry, subtitle format) of the brandkit
+    slots a converted heading and its secondary lines move to."""
+    geom = _geom_of(title_ph)
+    sub_ph = _sub_ph_of(layout_rec)
+    if sub_ph and _geom_of(sub_ph):
+        return geom, _geom_of(sub_ph), sub_ph.get("format_levels", {}) \
+            .get("1", default_sub_fmt)
+    if geom:
+        # no subtitle on this layout: synthesize a slot directly below the
+        # title
+        return geom, (geom[0], geom[1] + geom[3],
+                      geom[2], round(0.45 * 914400)), default_sub_fmt
+    return geom, None, default_sub_fmt
+
+
+def _restyle_slide_headings(new_sld, layout_name: str,
+                            plan: _HeadingPlan) -> None:
+    layout_rec = plan.manifest_layouts.get(layout_name, {})
+    title_ph = _title_ph_of(layout_rec) or plan.default_title_ph
+    if not title_ph:
+        return
+    title_fmt = title_ph.get("format_levels", {}).get("1", {})
+    geom = sub_geom = None
+    sub_fmt = plan.default_sub_fmt
+    if plan.mode == "convert":
+        geom, sub_geom, sub_fmt = _heading_slots(
+            title_ph, layout_rec, plan.default_sub_fmt)
+    _apply_heading_style(
+        new_sld, title_fmt, plan.heading_font, title_geom=geom,
+        sub_geom=sub_geom, sub_fmt=sub_fmt, body_font=plan.body_font,
+        keep_fonts=plan.keep_fonts)
+
+
+_ALL_ADJUSTMENTS = frozenset({"color", "font", "title", "heading", "resize"})
+
+
+def _slide_allowances(index: int, protection: tuple[set[int], str, set[str]]
+                      ) -> tuple[bool, frozenset]:
+    """Which adjustments slide `index` (1-based) is open to: all, a chosen
+    subset, or none when fully frozen. Returns (fully frozen, allowed)."""
+    protected, mode, apply_set = protection
+    if index not in protected:
+        return False, _ALL_ADJUSTMENTS
+    if mode == "full":
+        return True, frozenset()
+    return False, frozenset(apply_set)
+
+
+def _transplant_shape_tree(src_slide, new_sld, scale_factor: float | None,
+                           warnings: list[str], index: int) -> None:
+    """Replace the new slide's shape tree with a copy of the source slide's
+    (and carry over any slide background override)."""
+    src_cSld = src_slide._element.find(f"{{{P_NS}}}cSld")
+    new_cSld = new_sld.find(f"{{{P_NS}}}cSld")
+    new_spTree = new_cSld.find(f"{{{P_NS}}}spTree")
+    new_cSld.remove(new_spTree)
+    new_cSld.append(copy.deepcopy(
+        src_cSld.find(f"{{{P_NS}}}spTree")))
+    if scale_factor is not None:
+        _scale_shape_tree(
+            new_cSld.find(f"{{{P_NS}}}spTree"), scale_factor)
+    src_bg = src_cSld.find(f"{{{P_NS}}}bg")
+    if src_bg is not None:
+        new_cSld.insert(0, copy.deepcopy(src_bg))
+        warnings.append(f"slide {index}: keeps its own background "
+                        f"override from the content deck")
+
+
+def _transplant_rels(src_slide, new_slide, cloner: _PartCloner,
+                     from_idx: int, src_slide_index: dict,
+                     pending_links: list,
+                     protected_parts: set | None) -> dict[str, str]:
+    """Bring over the slide's related parts (images, charts, ...) and return
+    the old -> new relationship id map. Internal slide jumps are deferred to
+    `pending_links`: their target new slide may not exist yet, and cloning it
+    would duplicate a slide part. Cloned parts are also recorded in
+    `protected_parts` when one is given (fully-frozen slide)."""
+    rid_map: dict[str, str] = {}
+    for r_id, rel in src_slide.part.rels.items():
+        if rel.reltype in (RT.SLIDE_LAYOUT, RT.NOTES_SLIDE):
+            continue
+        if rel.reltype == RT.SLIDE and not rel.is_external:
+            pending_links.append(
+                (from_idx, r_id, src_slide_index.get(rel.target_part)))
+            continue
+        if rel.is_external:
+            new_rid = new_slide.part.relate_to(
+                rel.target_ref, rel.reltype, is_external=True)
+        else:
+            child = cloner.clone(rel.target_part)
+            new_rid = new_slide.part.relate_to(child, rel.reltype)
+            if protected_parts is not None:
+                # keep this slide's charts/diagrams unrestyled too
+                protected_parts.add(child)
+        rid_map[r_id] = new_rid
+    return rid_map
+
+
+@dataclass(frozen=True)
+class _RestylePlan:
+    """The run-wide restyle decisions every transplanted slide is put
+    through, resolved once from the two themes and the user's choices."""
+    color_map: dict
+    font_map: dict
+    adopt_title_sizes: bool
+    headings: _HeadingPlan
+    src_theme_colors: dict
+    src_theme_fonts: dict
+
+
+def _restyle_slide(new_sld, layout_name: str, allow: frozenset,
+                   is_full: bool, plan: _RestylePlan) -> None:
+    """Restyle the transplanted content in place: hard-coded colors and fonts
+    matching the source theme -> brandkit equivalents; title placeholders
+    adopt the brand layout's font sizes. (These touch only the XML tree, not
+    relationship ids, so they can run before the ids are rewritten.)"""
+    if is_full:
+        # bake original theme colors/fonts in so the brand theme this
+        # slide now lands under cannot shift its appearance
+        _freeze_theme(new_sld, plan.src_theme_colors, plan.src_theme_fonts)
+    _restyle_tree(new_sld,
+                  plan.color_map if "color" in allow else {},
+                  plan.font_map if "font" in allow else {})
+    if plan.adopt_title_sizes and "title" in allow:
+        _adopt_brand_title_sizes(new_sld)
+    if plan.headings.mode in ("convert", "adopt") and "heading" in allow:
+        _restyle_slide_headings(new_sld, layout_name, plan.headings)
+
+
+def _resolve_slide_links(records: list, pending_links: list,
+                         warnings: list[str]) -> dict[int, set[str]]:
+    """Point each deferred slide-to-slide link at the matching output slide
+    (adding the new id to that slide's rid_map in `records`). Returns, per
+    slide index, the source ids whose target is not in the deck."""
+    drop_rids: dict[int, set[str]] = {}
+    for from_idx, r_id, target_idx in pending_links:
+        from_part = records[from_idx][0].part
+        if target_idx is None:
+            drop_rids.setdefault(from_idx, set()).add(r_id)
+            warnings.append("a slide-to-slide link targets a slide "
+                            "outside the deck and was dropped")
+            continue
+        new_rid = from_part.relate_to(records[target_idx][0].part,
+                                      RT.SLIDE)
+        records[from_idx][2][r_id] = new_rid
+    return drop_rids
+
+
+def _rewrite_slide_rids(new_sld, rid_map: dict[str, str],
+                        dropped: set[str]) -> None:
+    if not rid_map and not dropped:
+        return
+    for el in new_sld.iter():
+        for name, val in list(el.attrib.items()):
+            if not name.startswith(f"{{{R_NS}}}"):
+                continue
+            if val in rid_map:
+                el.set(name, rid_map[val])
+            elif val in dropped:
+                del el.attrib[name]  # avoid a dangling r:id
+
+
+def _restyle_cloned_parts(cloner: _PartCloner, protected_parts: set,
+                          color_map: dict, font_map: dict,
+                          warnings: list[str]) -> None:
+    """Restyle cloned XML parts too (charts, chart styles, SmartArt): colors
+    AND fonts hard-coded to the source theme -> brandkit."""
+    restyled = 0
+    for part in cloner.cloned:
+        if part in protected_parts:
+            continue  # chart/diagram of a fully-frozen slide: leave as-is
+        if part.content_type.endswith("xml"):
+            new_blob = _restyle_blob(part.blob, color_map, font_map)
+            if new_blob is not part.blob:
+                part._blob = new_blob
+                restyled += 1
+    if restyled:
+        warnings.append(f"{restyled} embedded part(s) (charts/diagrams) "
+                        f"restyled to brandkit colors/fonts")
+
+
 def retheme_pptx(package_dir: str | Path, deck_path: str | Path,
                  out_path: str | Path,
                  choices: dict[str, str] | None = None) -> list[str]:
@@ -800,12 +1179,7 @@ def retheme_pptx(package_dir: str | Path, deck_path: str | Path,
     from ..extractor.extract import _as_presentation
 
     package_dir, deck_path = Path(package_dir), Path(deck_path)
-    manifest = json.loads(
-        (package_dir / "template.json").read_text(encoding="utf-8"))
-    source_rel = manifest.get("source_template")
-    source_path = package_dir / source_rel if source_rel else None
-    if not source_path or not source_path.is_file():
-        raise FileNotFoundError("package has no embedded source template")
+    manifest, source_path = _load_manifest(package_dir)
 
     warnings: list[str] = []
     tmp = Path(tempfile.mkdtemp(prefix="retheme-"))
@@ -813,130 +1187,37 @@ def retheme_pptx(package_dir: str | Path, deck_path: str | Path,
         dest = Presentation(str(_as_presentation(source_path, tmp)))
         src = Presentation(str(_as_presentation(deck_path, tmp)))
 
-        # slide-size mismatch: keep positions (default, transparent) or, when
-        # the user opts in with resize="fit", uniformly scale content to fit
-        # the brand canvas (uniform factor so nothing is stretched/distorted)
-        size_differs = (src.slide_width, src.slide_height) != \
-            (dest.slide_width, dest.slide_height)
-        scale_factor = None
-        if size_differs:
-            if choices.get("resize", "keep") == "fit" \
-                    and src.slide_width and src.slide_height:
-                scale_factor = min(dest.slide_width / src.slide_width,
-                                   dest.slide_height / src.slide_height)
-                warnings.append(
-                    "content deck and brandkit have different slide sizes "
-                    f"({src.slide_width}x{src.slide_height} vs "
-                    f"{dest.slide_width}x{dest.slide_height} EMU): content "
-                    f"scaled by {scale_factor:.3f} to fit the brand canvas")
-            else:
-                warnings.append(
-                    "content deck and brandkit have different slide sizes "
-                    f"({src.slide_width}x{src.slide_height} vs "
-                    f"{dest.slide_width}x{dest.slide_height} EMU): retained "
-                    "content keeps its absolute positions and may need "
-                    "adjustment in PowerPoint")
-
-        layouts_by_name = {}
-        for master in dest.slide_masters:
-            for layout in master.slide_layouts:
-                layouts_by_name.setdefault(layout.name, layout)
+        scale_factor = _resize_factor(src, dest, choices, warnings)
+        layouts_by_name = _layouts_by_name(dest)
 
         # source-theme formatting -> brandkit formatting maps: hard-coded
         # colors/fonts matching the source theme get rewritten to the brand.
         # Aggregated across ALL source masters so multi-master decks rebrand
         # colors bound to any master's theme, not just the first.
-        src_themes = _theme_colors_all(src)
         dest_theme = _theme_colors_of(dest)
-        theme_color_map = _source_theme_color_map(src_themes, dest_theme)
-        color_map = dict(theme_color_map)
-        src_fonts_list = _theme_fonts_all(src)
         dest_fonts = _theme_fonts_of(dest)
-        font_map = _source_theme_font_map(src_fonts_list, dest_fonts)
-
-        # harmonize hard-coded off-theme colors. Default: only the dominant
-        # color family is rebranded; user choices can rebrand/keep any family
-        primary = next((c["hex"] for c in manifest.get("colors", [])
-                        if c.get("role") == "primary"), None) \
-            or dest_theme.get("accent1")
-        if primary:
-            protected = set(dest_theme.values()) | set(color_map.values())
-            clusters = color_clusters(src, protected)
-            rebrand_ids = {
-                c["id"] for c in clusters
-                if choices.get(c["id"], "rebrand" if c["dominant"] else
-                               "keep") == "rebrand"}
-            harmony = _harmonization_map(clusters, primary, rebrand_ids)
-            if harmony:
-                warnings.append(
-                    f"{len(harmony)} hard-coded color(s) recolored to the "
-                    f"brand primary (#{primary})")
-                # theme-derived mappings take precedence over harmonization
-                color_map = {**harmony, **theme_color_map}
-
-        # foreign hard-coded fonts: map to the brand body font unless the
-        # user chose to keep them. Kept faces are also protected from the
-        # heading restyle below, so the choice actually shows on headings.
-        exclude = {f for sf in src_fonts_list for f in sf.values()} \
-            | set(dest_fonts.values())
-        keep_fonts: set[str] = set()
-        for face in collect_hardcoded_fonts(src, exclude):
-            if choices.get(f"font:{face}", "map") == "map" \
-                    and dest_fonts.get("minor"):
-                font_map[face] = dest_fonts["minor"]
-            else:
-                keep_fonts.add(face)
+        color_map = _build_color_map(src, _theme_colors_all(src), dest_theme,
+                                     manifest, choices, warnings)
+        font_map, keep_fonts = _build_font_map(
+            src, _theme_fonts_all(src), dest_fonts, choices)
 
         layout_overrides = {
             key[len("layout:"):]: value for key, value in choices.items()
             if key.startswith("layout:")}
-        adopt_title_sizes = choices.get("title_sizes", "adopt") == "adopt"
-        # heading_style: "convert" (restyle + move to title position),
-        # "adopt" (restyle in place), or "keep"
-        heading_mode = choices.get("heading_style", "convert")
-        manifest_layouts = {l["name"]: l for l in manifest.get("layouts", [])}
-        heading_font = dest_fonts.get("major") or dest_fonts.get("minor")
-
-        def _title_ph_of(layout_rec):
-            for ph in layout_rec.get("placeholders", []):
-                if ph["type"] in ("title", "ctrTitle") and \
-                        ph.get("format_levels", {}).get("1"):
-                    return ph
-            return None
-
-        def _sub_ph_of(layout_rec):
-            for ph in layout_rec.get("placeholders", []):
-                if ph["type"] == "subTitle":
-                    return ph
-            return None
-
-        def _geom_of(ph) -> tuple[int, int, int, int] | None:
-            pos, size = ph.get("position"), ph.get("size")
-            if not pos or not size:
-                return None
-            return (round(pos["x_in"] * 914400), round(pos["y_in"] * 914400),
-                    round(size["width_in"] * 914400),
-                    round(size["height_in"] * 914400))
-
-        # brandkit-wide title/subtitle styles, for slides landing on layouts
-        # that have no such placeholder of their own (e.g. Blank)
-        default_title_ph = next(
-            (ph for l in manifest.get("layouts", [])
-             if (ph := _title_ph_of(l))), None)
-        default_sub_ph = next(
-            (ph for l in manifest.get("layouts", [])
-             if (ph := _sub_ph_of(l))), None)
-        default_sub_fmt = (default_sub_ph or {}).get(
-            "format_levels", {}).get("1", {"size_pt": 14})
+        headings = _build_heading_plan(manifest, choices, dest_fonts,
+                                       keep_fonts)
 
         # per-slide protection: listed slides opt out of the choices. "full"
         # freezes them to their original look (theme colors/fonts baked in);
         # "partial" still applies only the chosen adjustment categories.
-        protected, protect_mode, protect_apply = _parse_protection(choices)
-        src_theme_colors = _theme_colors_of(src)
-        src_theme_fonts = _theme_fonts_of(src)
+        protection = _parse_protection(choices)
+        plan = _RestylePlan(
+            color_map=color_map, font_map=font_map,
+            adopt_title_sizes=choices.get("title_sizes", "adopt") == "adopt",
+            headings=headings,
+            src_theme_colors=_theme_colors_of(src),
+            src_theme_fonts=_theme_fonts_of(src))
         protected_parts: set = set()   # cloned parts of fully-frozen slides
-        _ALL_ADJ = {"color", "font", "title", "heading", "resize"}
 
         _delete_all_slides(dest)
         cloner = _PartCloner(dest.part.package)
@@ -953,140 +1234,32 @@ def retheme_pptx(package_dir: str | Path, deck_path: str | Path,
             layout = _pick_layout(s, layouts_by_name, manifest, warnings, i,
                                   layout_overrides)
             new_slide = dest.slides.add_slide(layout)
-
-            # which adjustments this slide is open to (all, a chosen subset,
-            # or none when fully frozen)
-            is_full = i in protected and protect_mode == "full"
-            if i in protected:
-                allow = set() if is_full else set(protect_apply)
-            else:
-                allow = _ALL_ADJ
-
-            # transplant the whole shape tree (and any slide bg override)
             new_sld = new_slide._element
-            src_cSld = s._element.find(f"{{{P_NS}}}cSld")
-            new_cSld = new_sld.find(f"{{{P_NS}}}cSld")
-            new_spTree = new_cSld.find(f"{{{P_NS}}}spTree")
-            new_cSld.remove(new_spTree)
-            new_cSld.append(copy.deepcopy(
-                src_cSld.find(f"{{{P_NS}}}spTree")))
-            if scale_factor is not None and "resize" in allow:
-                _scale_shape_tree(
-                    new_cSld.find(f"{{{P_NS}}}spTree"), scale_factor)
-            src_bg = src_cSld.find(f"{{{P_NS}}}bg")
-            if src_bg is not None:
-                new_cSld.insert(0, copy.deepcopy(src_bg))
-                warnings.append(f"slide {i}: keeps its own background "
-                                f"override from the content deck")
+            is_full, allow = _slide_allowances(i, protection)
 
-            # bring over the slide's related parts (images, charts, ...).
-            # Internal slide jumps are deferred: their target new slide may
-            # not exist yet, and cloning it would duplicate a slide part.
-            rid_map: dict[str, str] = {}
-            for r_id, rel in s.part.rels.items():
-                if rel.reltype in (RT.SLIDE_LAYOUT, RT.NOTES_SLIDE):
-                    continue
-                if rel.reltype == RT.SLIDE and not rel.is_external:
-                    pending_links.append(
-                        (i - 1, r_id, src_slide_index.get(rel.target_part)))
-                    continue
-                if rel.is_external:
-                    new_rid = new_slide.part.relate_to(
-                        rel.target_ref, rel.reltype, is_external=True)
-                else:
-                    child = cloner.clone(rel.target_part)
-                    new_rid = new_slide.part.relate_to(child, rel.reltype)
-                    if is_full:
-                        # keep this slide's charts/diagrams unrestyled too
-                        protected_parts.add(child)
-                rid_map[r_id] = new_rid
-
+            _transplant_shape_tree(
+                s, new_sld, scale_factor if "resize" in allow else None,
+                warnings, i)
+            rid_map = _transplant_rels(
+                s, new_slide, cloner, i - 1, src_slide_index, pending_links,
+                protected_parts if is_full else None)
             # carry over speaker notes (their own part + relationships)
             if _transplant_notes(s, new_slide, dest, cloner):
                 notes_kept += 1
-
-            # restyle the transplanted content in place: hard-coded colors
-            # and fonts matching the source theme -> brandkit equivalents;
-            # title placeholders adopt the brand layout's font sizes. (These
-            # touch only the XML tree, not relationship ids, so they run now.)
-            if is_full:
-                # bake original theme colors/fonts in so the brand theme this
-                # slide now lands under cannot shift its appearance
-                _freeze_theme(new_sld, src_theme_colors, src_theme_fonts)
-            _restyle_tree(new_sld,
-                          color_map if "color" in allow else {},
-                          font_map if "font" in allow else {})
-            if adopt_title_sizes and "title" in allow:
-                _adopt_brand_title_sizes(new_sld)
-            if heading_mode in ("convert", "adopt") and "heading" in allow:
-                layout_rec = manifest_layouts.get(layout.name, {})
-                title_ph = _title_ph_of(layout_rec) or default_title_ph
-                if title_ph:
-                    title_fmt = title_ph.get("format_levels", {}).get("1", {})
-                    geom = sub_geom = None
-                    sub_fmt = default_sub_fmt
-                    if heading_mode == "convert":
-                        geom = _geom_of(title_ph)
-                        sub_ph = _sub_ph_of(layout_rec)
-                        if sub_ph and _geom_of(sub_ph):
-                            sub_geom = _geom_of(sub_ph)
-                            sub_fmt = sub_ph.get("format_levels", {}) \
-                                .get("1", default_sub_fmt)
-                        elif geom:
-                            # no subtitle on this layout: synthesize a slot
-                            # directly below the title
-                            sub_geom = (geom[0], geom[1] + geom[3],
-                                        geom[2], round(0.45 * 914400))
-                    _apply_heading_style(
-                        new_sld, title_fmt, heading_font, title_geom=geom,
-                        sub_geom=sub_geom, sub_fmt=sub_fmt,
-                        body_font=dest_fonts.get("minor"),
-                        keep_fonts=frozenset(keep_fonts))
+            _restyle_slide(new_sld, layout.name, allow, is_full, plan)
 
             records.append((new_slide, new_sld, rid_map))
 
         # every new slide now exists: resolve internal slide-to-slide links
         # to the matching output slide, then rewrite all relationship ids
-        drop_rids: dict[int, set[str]] = {}
-        for from_idx, r_id, target_idx in pending_links:
-            from_part = records[from_idx][0].part
-            if target_idx is None:
-                drop_rids.setdefault(from_idx, set()).add(r_id)
-                warnings.append("a slide-to-slide link targets a slide "
-                                "outside the deck and was dropped")
-                continue
-            new_rid = from_part.relate_to(records[target_idx][0].part,
-                                          RT.SLIDE)
-            records[from_idx][2][r_id] = new_rid
+        drop_rids = _resolve_slide_links(records, pending_links, warnings)
         for idx, (_new_slide, new_sld, rid_map) in enumerate(records):
-            dropped = drop_rids.get(idx, set())
-            if not rid_map and not dropped:
-                continue
-            for el in new_sld.iter():
-                for name, val in list(el.attrib.items()):
-                    if not name.startswith(f"{{{R_NS}}}"):
-                        continue
-                    if val in rid_map:
-                        el.set(name, rid_map[val])
-                    elif val in dropped:
-                        del el.attrib[name]  # avoid a dangling r:id
+            _rewrite_slide_rids(new_sld, rid_map, drop_rids.get(idx, set()))
         if notes_kept:
             warnings.append(f"{notes_kept} slide(s) kept their speaker notes")
 
-        # restyle cloned XML parts too (charts, chart styles, SmartArt):
-        # colors AND fonts hard-coded to the source theme -> brandkit
-        restyled = 0
-        for part in cloner.cloned:
-            if part in protected_parts:
-                continue  # chart/diagram of a fully-frozen slide: leave as-is
-            if part.content_type.endswith("xml"):
-                new_blob = _restyle_blob(part.blob, color_map, font_map)
-                if new_blob is not part.blob:
-                    part._blob = new_blob
-                    restyled += 1
-        if restyled:
-            warnings.append(f"{restyled} embedded part(s) (charts/diagrams) "
-                            f"restyled to brandkit colors/fonts")
+        _restyle_cloned_parts(cloner, protected_parts, color_map, font_map,
+                              warnings)
 
         # carry over any custom table-style definitions the deck's tables use
         _merge_table_styles(src, dest, color_map, font_map, warnings)
