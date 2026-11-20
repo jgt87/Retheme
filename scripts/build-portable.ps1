@@ -32,7 +32,9 @@ function Invoke-Native([string]$cmdLine, [string]$what) {
 # ======================================================================
 if ($Only -in "exe", "both") {
     Write-Host "=== Building exe package (PyInstaller) ===" -ForegroundColor Cyan
-    & python -c "import PyInstaller" 2>$null
+    # cmd does the redirect: under EAP=Stop, PS 5.1 turns redirected native
+    # stderr (the ImportError traceback) into a terminating error.
+    cmd /c 'python -c "import PyInstaller" 2>nul'
     if ($LASTEXITCODE -ne 0) {
         Write-Host "Installing PyInstaller..."
         Invoke-Native "python -m pip install --quiet pyinstaller" "pip install pyinstaller"

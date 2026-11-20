@@ -8,4 +8,4 @@ Phase 2 (application): template package + slide-content JSON -> HTML deck.
 # Bump when extraction output changes so stale packages can be detected:
 # applying a package stamped with an older version produces a warning
 # telling the user to re-extract.
-__version__ = "0.3.1"
+__version__ = "0.3.2"

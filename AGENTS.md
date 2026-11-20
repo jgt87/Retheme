@@ -88,6 +88,10 @@ uses the installed Edge instead of downloading Chromium.
 - `dist/` is build output, published as GitHub Release assets, never committed.
 - PowerShell scripts target Windows PowerShell 5.1: ASCII only, and run native
   tools through `Invoke-Native` (5.1 turns native stderr into errors).
+- In `build-portable.ps1`, a native command whose stderr is discarded runs
+  through `cmd /c "... 2>nul"`, never `2>$null` — reason: under EAP=Stop,
+  PS 5.1 threw on the PyInstaller import check and the v0.3.1 release built
+  nothing (2026-11-20).
 - E2E and screenshots use port 8765 so they never hit a running instance on 8000.
 - Copy in the UI: plain, literal, no em dashes in new strings.
 - `scripts/check-design-rules.mjs`, `check-control-rows.mjs` and

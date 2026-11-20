@@ -5,7 +5,10 @@ versions follow [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.3.1] - 2026-11-20
+## [0.3.2] - 2026-11-20
+
+Version 0.3.1 was tagged but its portable packages failed to build, so it was
+never published. 0.3.2 is the same set of changes plus the build fix.
 
 ### Changed
 - **Buttons, tabs and fields are one height and have a visible edge.** Fields
@@ -27,6 +30,8 @@ versions follow [SemVer](https://semver.org/).
 - Empty tables say why they are empty.
 
 ### Fixed
+- The portable packages build again: the build script stopped at its
+  PyInstaller check on a machine that did not have PyInstaller yet.
 - **A website could pass itself off as local.** The server's cross-site
   request guard accepted any origin that merely started with `http://localhost`
   (for example `http://localhost.evil.example`). It now checks the exact host.
