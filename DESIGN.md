@@ -7,6 +7,7 @@ colors:
   ink: "#1c1c28"
   muted: "#6b7280"
   line: "#e5e7eb"
+  line-strong: "#7f8797"
   surface: "#fcfdff"
   bg: "#f6f7fb"
   warn: "#b45309"
@@ -46,58 +47,69 @@ rounded:
   lg: "10px"
   pill: "999px"
 spacing:
-  xs: "4px"
-  sm: "8px"
-  md: "16px"
-  lg: "18px"
-  xl: "24px"
+  1: "4px"
+  2: "8px"
+  3: "12px"
+  4: "16px"
+  6: "24px"
+  8: "32px"
+sizes:
+  control: "32px"
+  control-dense: "28px"
+  touch-target: "44px"
+  icon: "16px"
 components:
   button-primary:
     backgroundColor: "{colors.signal-blue}"
     textColor: "{colors.on-accent}"
     typography: "{typography.label}"
     rounded: "{rounded.md}"
-    padding: "8px 16px"
+    height: "{sizes.control}"
+    padding: "0 12px"
   button-secondary:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
     typography: "{typography.label}"
     rounded: "{rounded.md}"
-    padding: "8px 16px"
+    height: "{sizes.control}"
+    padding: "0 12px"
   tab:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
     typography: "{typography.label}"
     rounded: "{rounded.pill}"
-    padding: "8px 24px"
+    height: "{sizes.control}"
+    padding: "0 24px"
   tab-active:
     backgroundColor: "{colors.signal-blue}"
     textColor: "{colors.on-accent}"
     typography: "{typography.label}"
     rounded: "{rounded.pill}"
-    padding: "8px 24px"
+    height: "{sizes.control}"
+    padding: "0 24px"
   card:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
     rounded: "{rounded.lg}"
-    padding: "18px"
+    padding: "16px"
   input:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
     typography: "{typography.data}"
     rounded: "{rounded.control}"
-    padding: "3px 6px"
+    height: "{sizes.control}"
+    padding: "0 8px"
   dropzone:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.muted}"
     rounded: "{rounded.lg}"
-    padding: "40px"
+    padding: "32px 16px"
   version-pill:
     backgroundColor: "{colors.signal-blue}"
     textColor: "{colors.on-accent}"
     typography: "{typography.caption}"
     rounded: "{rounded.pill}"
-    padding: "2px 10px"
+    padding: "2px 8px"
 ---
 
 # Design System: Retheme
@@ -151,8 +163,12 @@ A near-neutral, cool-grey field with a single saturated accent and two reserved 
   blue-black, never a pure black.
 - **Muted** (#6b7280): Secondary and supporting text, drop-zone instructions,
   table meta, timestamps. A cool grey that leans toward the accent hue.
-- **Line** (#e5e7eb): Every hairline: card borders, table row dividers, input
-  strokes, the resting drop-zone dash. The workhorse of the whole system.
+- **Line** (#e5e7eb): Every hairline that only divides: card borders and table
+  row dividers. The workhorse of the whole system.
+- **Line Strong** (#7f8797): The edge of anything you can operate: buttons,
+  tabs, fields, selects and the drop-zone dash. It measures at least 3:1 against
+  Surface and Background, so a control reads as a control at rest (WCAG 1.4.11).
+  `tests/test_design_rules.py::test_token_contrast` holds the number.
 - **Surface** (#fcfdff): The working panels (cards, tabs, inputs) that sit on
   the page field. A near-white nudged a hair toward the accent hue, so it never
   reads as clinical pure white while staying clearly lighter than Background.
@@ -160,7 +176,7 @@ A near-neutral, cool-grey field with a single saturated accent and two reserved 
   darker than the white panels, so surfaces separate without a shadow.
 
 ### Semantic (reserved warmths, used for meaning only)
-- **Warn** (#b45309): Amber. The review flag color, always paired with a ⚠ icon
+- **Warn** (#b45309): Amber. The review flag color, always paired with the warning icon
   or the word it labels, never carrying meaning by color alone.
 - **Error** (bg #fdecec, border #f5c2c0, text #b3261e): The error panel. A soft
   red wash with a legible red text, used for failures and blocking warnings.
@@ -170,6 +186,11 @@ A near-neutral, cool-grey field with a single saturated accent and two reserved 
 on elements that are actionable, currently active, or requesting a live
 decision. It is forbidden as a background wash, a heading tint, a divider, or a
 decorative flourish. Its scarcity is what makes it legible.
+
+**The Derived-Shade Rule.** Hover, selected and soft fills are tints of the
+tokens above, mixed in `tokens.css` with `color-mix()` (`--brand-hover`,
+`--accent-soft`, `--hover`, `--track`). A new solid color for a state is
+prohibited.
 
 **The Tinted-Neutral Rule.** Neutrals lean cool and slightly blue (Ink, Muted,
 Background). Pure warm grey is prohibited. The only non-neutral colors permitted
@@ -209,6 +230,22 @@ would announce the chrome and contradict the instrument.
 Muted), not from large size jumps. No fluid/`clamp` headings; users work at a
 fixed DPI and a shrinking heading in a panel looks worse, not better.
 
+### Spacing and sizes
+- **Spacing** steps are 4, 8, 12, 16, 24 and 32px (`--sp-1` to `--sp-8`).
+  Margin, padding and gap use these tokens only; a heading gets twice the room
+  above it as below.
+- **Controls** are 32px tall: buttons, tabs, fields and selects share the
+  height, so any row of them lines up. Dense rows (table cells, layout chips)
+  use 28px. On a touch screen every control reaches 44px, buttons through an
+  invisible hit area and fields by growing.
+- **Icons** come from one inline SVG set (16px, 2px stroke, the text color).
+  No emoji and no glyph arrows.
+
+### Named Rules
+**The Spacing-Scale Rule.** `test_spacing_on_the_spacing_scale` fails on a
+margin, padding or gap in `app.css` that is not a `--sp-*` token (0, 1px and
+2px hairline offsets aside).
+
 ## 4. Elevation
 
 The system is flat. There are no box-shadows anywhere. Depth is communicated
@@ -217,8 +254,8 @@ entirely by a 1px `Line` (#e5e7eb) border plus the tonal step between a white
 it is lighter than the page and outlined, not because it casts a shadow.
 
 State is likewise shadow-free: a hover is a `border-color` shift to Signal Blue,
-a selection is a 2px Signal Blue `outline`, a disabled control is reduced
-`opacity`. Nothing rises or floats.
+a selection is a Signal Blue edge on a soft Signal Blue tint, a disabled control
+is reduced `opacity`. Nothing rises or floats.
 
 ### Named Rules
 **The Flat-By-Default Rule.** Surfaces are flat at rest and flat in every state.
@@ -233,21 +270,28 @@ modest radius, no shadow, and Signal Blue reserved for the active or primary
 case.
 
 ### Buttons
-- **Shape:** Gently rounded (8px radius).
-- **Primary:** Signal Blue (#10069F) fill, white label, semibold 14px, 8px 16px
-  padding. One primary action per context.
-- **Secondary:** White fill, Ink label, 1px Line border. Same shape and padding
-  as primary; used for downloads and non-committal actions.
-- **Disabled:** `opacity: 0.5`, default cursor. No color change.
+- **Shape:** Gently rounded (8px radius), 32px tall, 12px side padding.
+- **Primary** (`class="primary"`): Signal Blue (#10069F) fill, white label,
+  semibold 14px. One primary action per view, on the forward path.
+- **Secondary** (the default `button`): White fill, Ink label, 1px Line Strong
+  border. Same shape as primary; used for downloads and non-committal actions.
+- **Hover:** secondary shifts border and label to Signal Blue; primary takes
+  the `--brand-hover` tint. Only under `@media (hover: hover)`.
+- **Busy:** a spinner and a changed label inside the button ("Retheme deck"
+  becomes "Retheming…"), width kept, `aria-busy`, a second press ignored.
+- **Disabled:** `opacity: 0.5`, `not-allowed` cursor. No color change.
 - **Focus:** A 2px Signal Blue outline offset 2px, on keyboard focus
-  (`:focus-visible`).
+  (`:focus-visible`). The same rule covers every control.
 
 ### Tabs (signature navigation)
-- **Shape:** Full pills (999px), centered in the header.
-- **Default:** White fill, Ink label, 1px Line border, semibold 14px, 8px 24px.
+- **Shape:** Full pills (999px), centered in the header, 32px tall.
+- **Default:** White fill, Ink label, 1px Line Strong border, semibold 14px,
+  24px side padding.
 - **Hover:** Border and label shift to Signal Blue (fill stays white).
 - **Active:** Signal Blue fill, white label, Signal Blue border.
-- **Disabled:** `opacity: 0.4` (a locked step, e.g. Preview before a deck exists).
+- **Locked:** `opacity: 0.4` with `aria-disabled` (Preview before a deck
+  exists). It stays focusable so its reason can be read.
+- **Keyboard:** one tab stop; arrow keys move, Home and End jump.
 
 ### Cards / Containers
 - **Corner Style:** 10px radius.
@@ -255,34 +299,61 @@ case.
 - **Shadow Strategy:** None. See Elevation; a 1px Line border plus the tonal step
   does the separating.
 - **Border:** 1px solid Line (#e5e7eb).
-- **Internal Padding:** 18px. Never nest a card inside a card.
+- **Internal Padding:** 16px. Never nest a card inside a card: groups inside a
+  card (the retheme choices, the protect-slides block) are rows divided by a
+  hairline, not boxes.
 
 ### Inputs / Fields
-- **Style:** White fill, 1px Line border, 5px radius, 13px Data type, tight 3px
-  6px padding.
-- **Focus:** Signal Blue border plus a soft Signal Blue ring
-  (`box-shadow: 0 0 0 3px rgba(16,6,159,.28)`) on `:focus-visible`.
+- **Style:** White fill, 1px Line Strong border, 5px radius, 13px Data type,
+  32px tall with 8px side padding (28px inside a table). Selects carry an SVG
+  chevron.
+- **Focus:** the same 2px Signal Blue outline as every other control.
+- **Groups:** radios and checkboxes that answer one question sit in a
+  `fieldset` with a `legend`.
 - **Disabled:** Reduced opacity, consistent with buttons.
 
 ### Drop Zone (signature input)
-- **Style:** A 2px dashed Line border, 10px radius, 40px of centered padding,
-  Muted instruction text with an Ink `strong` cue. Transparent over the card.
-- **Hover / drag-over:** Border and text shift to Signal Blue. On selection, the
-  chosen filename appears in Signal Blue below the prompt.
+- **Style:** A `label` over the native file input, so a click or Enter anywhere
+  on it opens the picker. 2px dashed Line Strong border, 10px radius, one line
+  of Muted text with an Ink `strong` cue, the accepted file types in 12px below.
+- **Drag-over:** Border shifts to Signal Blue on the soft Signal Blue tint. On
+  selection the file name appears in Ink below the prompt, shortened in the
+  middle so the extension stays readable.
 - The dashed border is the one place a 2px border is allowed, because it reads
   specifically as "drop a file here."
 
+### Tables
+- Horizontal Line rules only. Headers 12px Muted semibold; number columns and
+  their headers right-aligned with tabular figures. An empty table says why in
+  one spanning row. On a narrow screen the table scrolls sideways inside its
+  wrapper; the page never does.
+
 ### Collapsible Logs (signature disclosure)
 - A bordered `details` block (1px Line, 8px radius) with a semibold summary and a
-  custom chevron built from a rotating 7px border-box (right when closed, down
-  when open, 150ms). Auto-expands when it holds a critical warning; otherwise
+  chevron from the icon set (right when closed, down when open, 150ms). Auto-expands when it holds a critical warning; otherwise
   starts collapsed so the deck preview stays the focus.
 
 ### Status surfaces
 - **Version pill:** Signal Blue fill, white, 11px semibold, full pill. Header only.
 - **Error panel:** Soft red wash (#fdecec / #f5c2c0 / #b3261e), 8px radius, for
-  failures and blocking warnings.
-- **Review flag:** Warn amber, semibold, always with a ⚠ icon or its label word.
+  failures and blocking warnings. Always the warning icon, the word "Error",
+  what happened and how to recover. It sits above what it concerns.
+- **Review flag:** Warn amber, semibold, always the warning icon with its word.
+- **Progress:** a 6px pill track with a Signal Blue fill, the step in words and
+  a percentage that never reads 100% before the server confirms.
+
+### Motion
+- State changes take 150ms ease-out on color, border and background only.
+  Under reduced motion color and opacity stay; movement (the button press, the
+  chevron turn, the spinner's rotation) is dropped.
+
+### Accepted deviations from the shared rules
+- **Light theme only.** No dark theme (operator, 2026-11-19).
+- **Pill tabs** instead of underline tabs (operator, 2026-11-19).
+- **Preview frame heights** are fitted to the slide content by script, because
+  the frame shows a scaled deck whose height is only known after it renders.
+- **Table headers are not sticky.** The tables scroll sideways in a wrapper, and
+  a sticky header would stick to that wrapper, not the page.
 
 ## 6. Do's and Don'ts
 
@@ -294,7 +365,7 @@ case.
 - **Do** carry every text role with the system-ui stack, and build hierarchy from
   weight (400 / 600 / 700) and color (Ink / Muted), not size.
 - **Do** give every interactive control a visible focus ring, and pair every
-  status color with an icon or word (⚠ with Warn, a label with Error), so state
+  status color with an icon or word (the warning icon with Warn, the word with Error), so state
   never depends on color alone. The target bar is WCAG 2.1 AA.
 - **Do** use standard, familiar controls: pill tabs, real `<details>`, native
   radios and file inputs. Familiarity is the feature; the tool should disappear.

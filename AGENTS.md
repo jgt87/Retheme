@@ -18,6 +18,8 @@ python -m pytest -q tests/test_retheme.py::test_palette_harmonization   # one te
 python -m playwright install chromium      # once, for e2e/screenshots
 python -m pytest -q e2e/                   # browser smoke + axe (port 8765)
 python scripts/screenshots.py              # regenerate docs/screenshots/
+node scripts/design-checks.mjs --root pptx_template_tool/webapp/static --config scripts/design-check.json
+                                           # rendered design rules (Edge or Chrome, port 8767)
 python -m pptx_template_tool.cli serve     # UI on http://127.0.0.1:8000
 python -m pptx_template_tool.cli audit template.potx package/   # fidelity check
 scripts\build-portable.cmd [-Only exe|ps]  # portable packages into dist\
@@ -59,9 +61,15 @@ uses the installed Edge instead of downloading Chromium.
   2026-11-08, test `test_lookalike_local_origins_rejected`).
 - **Static files go through the `UI_ASSETS` allow-list**, not a directory
   mount, so nothing else in the package is fetchable.
-- **Colors and font sizes live in `static/tokens.css` only.**
-  `tests/test_design_rules.py` fails on hex literals or off-scale sizes in
+- **Colors, font sizes and spacing live in `static/tokens.css` only.**
+  `tests/test_design_rules.py` fails on hex literals, color functions,
+  off-scale sizes, margin/padding/gap that is not a `--sp-*` token, an
+  undefined `var(--x)`, or a token pair under its contrast minimum, in
   `index.html`, `app.css`, `app.js`. Deck/user colors are built at runtime.
+- **Show and hide with the `hidden` attribute**, never a class. `e2e/flow.py`
+  waits on `:not([hidden])`.
+- **A plain `button` is secondary; the one forward action per view gets
+  `class="primary"`.** `scripts/design-checks.mjs` fails on two primaries.
 - **Every form control has an accessible name; status lines use
   `role="status"`, error boxes `role="alert"`.** The e2e axe scan fails on
   violations of impact moderate or higher.
@@ -82,6 +90,14 @@ uses the installed Edge instead of downloading Chromium.
   tools through `Invoke-Native` (5.1 turns native stderr into errors).
 - E2E and screenshots use port 8765 so they never hit a running instance on 8000.
 - Copy in the UI: plain, literal, no em dashes in new strings.
+- `scripts/check-design-rules.mjs`, `check-control-rows.mjs` and
+  `design-checks.mjs` are copies of the shared templates; they serve `static/`
+  with no API, so they reach only the extract, retheme and help views. The
+  review, choices and preview states are covered by `e2e/` — reason: those
+  states need an uploaded file (2026-11-19).
+- The e2e walk waits for running transitions to end before each axe scan —
+  reason: reduced motion keeps color transitions, and axe sampled a tab
+  mid-fade as a contrast failure (2026-11-19).
 
 ## Releasing
 1. Bump `__version__` in `pptx_template_tool/__init__.py`.

@@ -53,17 +53,20 @@ def walk(page, base_url: str, template: Path,
     on_surface("home")
 
     page.set_input_files("#file-input", str(template))
-    page.wait_for_selector("#review:not(.hidden)", timeout=120_000)
+    page.wait_for_selector("#review:not([hidden])", timeout=120_000)
     page.wait_for_function("(document.querySelector('#layout-preview img') || {}).complete")
     on_surface("review")
 
     page.click("#goto-apply-btn")
     page.set_input_files("#content-file", str(deck))
     assert page.is_checked("#bk-session")
+    # the tab's 150 ms color transition must end before colors are sampled
+    page.wait_for_function(
+        "document.getAnimations().every(a => a.playState !== 'running')")
     on_surface("apply")
 
     page.click("#apply-btn")
-    page.wait_for_selector("#choices-card:not(.hidden), #tab-preview:not(.hidden)",
+    page.wait_for_selector("#choices-card:not([hidden]), #tab-preview:not([hidden])",
                            timeout=120_000)
     if page.is_visible("#choices-card"):
         page.wait_for_function(
@@ -71,7 +74,7 @@ def walk(page, base_url: str, template: Path,
         page.wait_for_timeout(500)  # let the frame lay out before measuring
         on_surface("choices")
         page.click("#confirm-btn")
-        page.wait_for_selector("#tab-preview:not(.hidden)", timeout=120_000)
+        page.wait_for_selector("#tab-preview:not([hidden])", timeout=120_000)
     page.wait_for_function(
         "(() => { const d = document.querySelector('#preview-frame').contentDocument;"
         " return d && d.querySelectorAll('.slide').length > 0; })()", timeout=60_000)

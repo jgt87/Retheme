@@ -5,46 +5,92 @@ const reduceMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matche
 const scrollBehavior = () => (reduceMotion() ? "auto" : "smooth");
 const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
+// ---------- shared pieces ----------
+// Icons come from the one SVG set at the top of index.html.
+const icon = (name) =>
+  `<svg class="icon" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
+// Status is never color alone: an icon, the word, then the message.
+const errorHtml = (msg) => `${icon("alert")}<div><strong>Error.</strong> ${msg}</div>`;
+
+// A busy button says what it is doing, keeps its width and ignores a second
+// press. Returns the function that puts it back.
+function setBusy(btn, label) {
+  const html = btn.innerHTML;
+  btn.style.minWidth = btn.offsetWidth + "px";
+  btn.innerHTML = `<span class="spinner"></span>${label}`;
+  btn.setAttribute("aria-busy", "true");
+  btn.disabled = true;
+  return () => {
+    btn.innerHTML = html;
+    btn.style.minWidth = "";
+    btn.removeAttribute("aria-busy");
+    btn.disabled = false;
+  };
+}
+
 // ---------- tabs ----------
 const TABS = ["extract", "apply", "preview"];
+const tabBtn = (t) => $("#tabbtn-" + t);
+const tabLocked = (t) => tabBtn(t).getAttribute("aria-disabled") === "true";
 function switchTab(name) {
-  $("#tab-help").classList.add("hidden");
+  $("#tab-help").hidden = true;
   $("#help-btn").classList.remove("active");
+  $("#help-btn").setAttribute("aria-pressed", "false");
   TABS.forEach(t => {
-    $("#tab-" + t).classList.toggle("hidden", t !== name);
-    const btn = $("#tabbtn-" + t);
+    $("#tab-" + t).hidden = t !== name;
+    const btn = tabBtn(t);
     btn.classList.toggle("active", t === name);
     btn.setAttribute("aria-selected", t === name ? "true" : "false");
+    btn.tabIndex = t === name ? 0 : -1;   // one tab stop for the whole list
   });
 }
-TABS.forEach(t => $("#tabbtn-" + t).addEventListener("click", () => switchTab(t)));
+TABS.forEach(t => tabBtn(t).addEventListener("click", () => {
+  if (!tabLocked(t)) switchTab(t);
+}));
+// Arrow keys move along the tabs, Home and End jump to the ends. An open tab
+// shows at once (its panel is already on the page); a locked one only takes
+// focus, so its reason can be read.
+$("nav.tabs").addEventListener("keydown", e => {
+  const at = TABS.findIndex(t => tabBtn(t) === document.activeElement);
+  if (at < 0) return;
+  const to = { ArrowRight: (at + 1) % TABS.length,
+               ArrowLeft: (at + TABS.length - 1) % TABS.length,
+               Home: 0, End: TABS.length - 1 }[e.key];
+  if (to === undefined) return;
+  e.preventDefault();
+  if (!tabLocked(TABS[to])) switchTab(TABS[to]);
+  tabBtn(TABS[to]).focus();
+});
 
 // ---------- help page ----------
 let helpReturn = "extract";
 function showHelp() {
-  helpReturn = TABS.find(t => $("#tabbtn-" + t).classList.contains("active")) || helpReturn;
+  helpReturn = TABS.find(t => tabBtn(t).classList.contains("active")) || helpReturn;
   TABS.forEach(t => {
-    $("#tab-" + t).classList.add("hidden");
-    const btn = $("#tabbtn-" + t);
+    $("#tab-" + t).hidden = true;
+    const btn = tabBtn(t);
     btn.classList.remove("active");
     btn.setAttribute("aria-selected", "false");
   });
-  $("#tab-help").classList.remove("hidden");
+  $("#tab-help").hidden = false;
   $("#help-btn").classList.add("active");
+  $("#help-btn").setAttribute("aria-pressed", "true");
   window.scrollTo({ top: 0, behavior: scrollBehavior() });
 }
-$("#help-btn").addEventListener("click", showHelp);
+$("#help-btn").addEventListener("click", () => {
+  if ($("#tab-help").hidden) showHelp(); else switchTab(helpReturn);
+});
 $("#help-back").addEventListener("click", () => switchTab(helpReturn));
 
 // Extract errors go back to the drop zone, so choosing another file is the
 // recovery (no page reload, nothing else in the session is lost).
 function showError(html) {
-  $("#progress-card").classList.add("hidden");
-  $("#upload-card").classList.remove("hidden");
+  $("#progress-card").hidden = true;
+  $("#upload-card").hidden = false;
   $("#file-input").value = "";
   const box = $("#error-box");
-  box.innerHTML = html + " Choose another file to try again.";
-  box.classList.remove("hidden");
+  box.innerHTML = errorHtml(html + " Choose another file to try again.");
+  box.hidden = false;
 }
 
 // FastAPI errors arrive as {"detail": "..."}; show the sentence, not the JSON.
@@ -67,61 +113,79 @@ if ($("#version-pill").textContent.includes("{{")) {
 // The page only works when served by the extraction server, not from disk:
 // every action calls its /api/... endpoints.
 if (location.protocol === "file:") {
-  $("#dropzone").innerHTML =
+  const note = document.createElement("div");
+  note.innerHTML =
     `<p><strong>This page was opened directly from disk, so it has no
      server to talk to.</strong></p>
      <p>Start the extraction server and open it from there instead:</p>
-     <p><code>python -m pptx_template_tool.cli serve</code> &nbsp;→&nbsp;
+     <p><code>python -m pptx_template_tool.cli serve</code>, then open
      <a href="http://127.0.0.1:8000/">http://127.0.0.1:8000/</a></p>`;
+  $("#dropzone").hidden = true;
+  $("#dropzone").before(note);
 }
 
-// ---------- upload ----------
-const dz = $("#dropzone");
-dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("hover"); });
-dz.addEventListener("dragleave", () => dz.classList.remove("hover"));
-dz.addEventListener("drop", e => {
-  e.preventDefault(); dz.classList.remove("hover");
-  if (e.dataTransfer.files.length) upload(e.dataTransfer.files[0]);
-});
+// ---------- drop zones ----------
+// Enter and leave are counted, so the highlight does not flicker while the
+// pointer crosses the zone's own children.
+function wireDropzone(zone, onFile) {
+  let depth = 0;
+  const lit = (on) => zone.classList.toggle("hover", on);
+  zone.addEventListener("dragenter", e => { e.preventDefault(); depth++; lit(true); });
+  zone.addEventListener("dragover", e => e.preventDefault());
+  zone.addEventListener("dragleave", () => { depth = Math.max(0, depth - 1); lit(depth > 0); });
+  zone.addEventListener("drop", e => {
+    e.preventDefault(); depth = 0; lit(false);
+    if (e.dataTransfer.files.length) onFile(e.dataTransfer.files[0]);
+  });
+}
+// A file dropped beside a zone must not replace the page with that file.
+["dragover", "drop"].forEach(ev => window.addEventListener(ev, e => e.preventDefault()));
+
+wireDropzone($("#dropzone"), upload);
 $("#file-input").addEventListener("change", e => {
   if (e.target.files.length) upload(e.target.files[0]);
 });
 
 // ---------- content-deck dropzone (mirrors the extract dropzone) ----------
-const deckDz = $("#deck-dropzone");
+const DECK_TYPES = [".pptx", ".potx", ".ppsx"];
+// The name shortens in the middle, so the extension stays readable.
 function showPickedDeck(file) {
+  const dot = file.name.lastIndexOf(".");
+  const stem = dot > 0 ? file.name.slice(0, dot) : file.name;
+  const ext = dot > 0 ? file.name.slice(dot) : "";
   const picked = $("#deck-picked");
-  picked.textContent = "Selected: " + file.name;
-  picked.classList.remove("hidden");
+  picked.innerHTML = `<span class="lead">Selected: </span><span class="stem">${
+    escapeHtml(stem)}</span><span class="ext">${escapeHtml(ext)}</span>`;
+  picked.title = file.name;
+  picked.hidden = false;
 }
-deckDz.addEventListener("dragover", e => {
-  e.preventDefault(); deckDz.classList.add("hover"); });
-deckDz.addEventListener("dragleave", () => deckDz.classList.remove("hover"));
-deckDz.addEventListener("drop", e => {
-  e.preventDefault(); deckDz.classList.remove("hover");
-  if (e.dataTransfer.files.length) {
-    // put the dropped file into the input so the apply handler picks it up
-    const dt = new DataTransfer();
-    dt.items.add(e.dataTransfer.files[0]);
-    $("#content-file").files = dt.files;
-    showPickedDeck(e.dataTransfer.files[0]);
+wireDropzone($("#deck-dropzone"), file => {
+  $("#apply-error").hidden = true;
+  if (!hasType(file, DECK_TYPES)) {  // drag-and-drop skips the accept filter
+    applyError(`<strong>${escapeHtml(file.name)}</strong> is not a PowerPoint deck.
+      Use a .pptx, .potx or .ppsx file.`);
+    return;
   }
+  // put the dropped file into the input so the apply handler picks it up
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  $("#content-file").files = dt.files;
+  showPickedDeck(file);
 });
 $("#content-file").addEventListener("change", e => {
   if (e.target.files.length) showPickedDeck(e.target.files[0]);
 });
 
 async function upload(file) {
-  $("#error-box").classList.add("hidden");
+  $("#error-box").hidden = true;
   if (!hasType(file, TEMPLATE_TYPES)) {  // drag-and-drop skips the accept filter
     showError(`<strong>${escapeHtml(file.name)}</strong> is not a PowerPoint template.
       Use a .pptx or .potx file.`);
     return;
   }
-  $("#progress-step").textContent = "Starting…";
-  $("#progress-bar").value = 0;
-  $("#upload-card").classList.add("hidden");
-  $("#progress-card").classList.remove("hidden");
+  showProgress("Starting…", 0);
+  $("#upload-card").hidden = true;
+  $("#progress-card").hidden = false;
   try {
     const fd = new FormData();
     fd.append("file", file);
@@ -140,6 +204,17 @@ async function upload(file) {
   }
 }
 
+// The step in words plus how far along it is; never 100% before the server
+// confirms the work is done.
+function showProgress(step, fraction) {
+  const pct = Math.min(99, Math.round((fraction || 0) * 100));
+  $("#progress-step").textContent = step;
+  $("#progress-pct").textContent = `${pct}%`;
+  const bar = $("#progress-bar");
+  bar.value = Math.min(0.99, fraction || 0);
+  bar.setAttribute("aria-valuetext", `${step} ${pct}%`);
+}
+
 let pollFailures = 0;
 async function poll() {
   let s;
@@ -155,16 +230,15 @@ async function poll() {
       report it; otherwise restart the server and try again.`);
     return;
   }
-  $("#progress-step").textContent = s.step || s.status;
-  $("#progress-bar").value = s.progress || 0;
+  showProgress(s.step || s.status, s.progress);
   if (s.status === "running") return setTimeout(poll, 700);
   if (s.status === "error") {
     showError(`Extraction failed: <code>${escapeHtml(s.error)}</code>.`);
     return;
   }
   manifest = await (await fetch(`/api/jobs/${jobId}/manifest`)).json();
-  $("#progress-card").classList.add("hidden");
-  $("#review").classList.remove("hidden");
+  $("#progress-card").hidden = true;
+  $("#review").hidden = false;
   renderReview();
   const sess = $("#bk-session");
   sess.disabled = false;
@@ -212,16 +286,22 @@ function renderReview() {
       </select></td>`;
     ctb.appendChild(tr);
   });
+  if (!manifest.colors.length) {
+    ctb.innerHTML = `<tr><td class="empty" colspan="4">This template defines no
+      theme colors, so there are no roles to correct.</td></tr>`;
+  }
 
   // layouts
   const nav = $("#layout-nav"); nav.innerHTML = "";
   manifest.layouts.forEach((l, i) => {
     const b = document.createElement("button");
-    b.textContent = l.name; b.className = "secondary";
+    b.type = "button";
+    b.textContent = l.name;
+    b.setAttribute("aria-pressed", "false");
     b.onclick = () => showLayout(i);
     nav.appendChild(b);
   });
-  showLayout(0);
+  if (manifest.layouts.length) showLayout(0);
 
   // assets
   const atb = $("#assets-table tbody"); atb.innerHTML = "";
@@ -242,20 +322,25 @@ function renderReview() {
       <td><code>${a.asset_id}</code><br><span class="muted">${a.source_format}</span></td>
       <td><select class="a-type" aria-label="Asset type for ${a.asset_id}">${TYPE_OPTIONS.map(t=>`<option value="${t}" ${t===a.type?"selected":""}>${TYPE_LABELS[t]}</option>`).join("")}</select></td>
       <td class="muted">${owners}<br>${a.role_notes || ""}</td>
-      <td><input class="pos" type="number" step="0.01" data-f="position.x_in" aria-label="${a.asset_id} x (inches)" value="${p.x_in ?? ""}"></td>
-      <td><input class="pos" type="number" step="0.01" data-f="position.y_in" aria-label="${a.asset_id} y (inches)" value="${p.y_in ?? ""}"></td>
-      <td><input class="pos" type="number" step="0.01" data-f="size.width_in" aria-label="${a.asset_id} width (inches)" value="${s.width_in ?? ""}"></td>
-      <td><input class="pos" type="number" step="0.01" data-f="size.height_in" aria-label="${a.asset_id} height (inches)" value="${s.height_in ?? ""}"></td>
-      <td class="flag-cell">${a.needs_review ? '<span class="flag">⚠ verify</span>' : ""}</td>`;
+      <td class="num"><input class="pos" type="number" step="0.01" data-f="position.x_in" aria-label="${a.asset_id} x (inches)" value="${p.x_in ?? ""}"></td>
+      <td class="num"><input class="pos" type="number" step="0.01" data-f="position.y_in" aria-label="${a.asset_id} y (inches)" value="${p.y_in ?? ""}"></td>
+      <td class="num"><input class="pos" type="number" step="0.01" data-f="size.width_in" aria-label="${a.asset_id} width (inches)" value="${s.width_in ?? ""}"></td>
+      <td class="num"><input class="pos" type="number" step="0.01" data-f="size.height_in" aria-label="${a.asset_id} height (inches)" value="${s.height_in ?? ""}"></td>
+      <td class="flag-cell">${a.needs_review ? `<span class="flag">${icon("alert")}Verify</span>` : ""}</td>`;
     atb.appendChild(tr);
     } catch (err) {
       console.error("could not render asset row", a.asset_id, err);
     }
   });
+  if (!manifest.assets.length) {
+    atb.innerHTML = `<tr><td class="empty" colspan="9">This template has no logos,
+      background images or decorative shapes to extract.</td></tr>`;
+  }
   const flagged = manifest.assets.filter(a=>a.needs_review).length;
   const rc = $("#review-count");
-  rc.textContent = flagged ? `⚠ ${plural(flagged, "item needs", "items need")} review` : "";
-  rc.classList.toggle("hidden", !flagged);
+  rc.innerHTML = flagged
+    ? `${icon("alert")}${plural(flagged, "item needs", "items need")} review` : "";
+  rc.hidden = !flagged;
   updateSaveButton();
 }
 
@@ -272,19 +357,27 @@ $("#review-count").addEventListener("click", () => {
 
 function showLayout(i) {
   const l = manifest.layouts[i];
-  [...$("#layout-nav").children].forEach((b,j)=>b.classList.toggle("active", j===i));
+  [...$("#layout-nav").children].forEach((b,j) => {
+    b.classList.toggle("active", j===i);
+    b.setAttribute("aria-pressed", j===i ? "true" : "false");
+  });
   const img = document.createElement("img");
   img.src = `/api/jobs/${jobId}/files/previews/layout-${slug(l.name)}.png`;
   img.alt = `Preview of the ${l.name} layout`;
   $("#layout-preview").replaceChildren(img);
   const bg = l.background || {};
   const bgTxt = bg.type === "solid" ? `solid #${bg.hex}`
-    : bg.type === "gradient" ? `gradient (${(bg.stops||[]).map(s=>"#"+s.hex).join(" → ")})`
+    : bg.type === "gradient" ? `gradient (${(bg.stops||[]).map(s=>"#"+s.hex).join(" to ")})`
     : bg.type === "image" ? `image (${bg.asset_id})` : bg.type;
   const purpose = l.purpose && l.purpose !== l.name ? `: ${l.purpose}` : "";
   let html = `<p><strong>${l.name}</strong>${purpose}<br>
-    <span class="muted">background: ${bgTxt} · static assets: ${(l.static_assets||[]).length}</span></p>
-    <table><thead><tr><th>placeholder</th><th>pos (in)</th><th>size (in)</th><th>font</th></tr></thead><tbody>`;
+    <span class="muted">Background: ${bgTxt} · static assets: ${(l.static_assets||[]).length}</span></p>
+    <table><caption class="sr-only">Placeholders of the ${l.name} layout</caption>
+    <thead><tr><th scope="col">Placeholder</th><th scope="col">Position (in)</th>
+    <th scope="col">Size (in)</th><th scope="col">Font</th></tr></thead><tbody>`;
+  if (!(l.placeholders || []).length) {
+    html += `<tr><td class="empty" colspan="4">This layout has no placeholders.</td></tr>`;
+  }
   (l.placeholders || []).forEach(ph => {
     const p = ph.position || {}, s = ph.size || {};
     const f = (ph.format_levels || {})["1"] || {};
@@ -349,11 +442,21 @@ function updateSaveButton() {
 $("#save-btn").addEventListener("click", async () => {
   const corrections = collectCorrections();
   if (!corrections.colors.length && !corrections.assets.length) return;
-  $("#save-btn").disabled = true;
-  $("#save-status").textContent = "Saving…";
-  const res = await fetch(`/api/jobs/${jobId}/manifest`, {
-    method: "PUT", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(corrections) });
+  $("#save-status").textContent = "";
+  const done = setBusy($("#save-btn"), "Saving…");
+  let res;
+  try {
+    res = await fetch(`/api/jobs/${jobId}/manifest`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(corrections) });
+  } catch (err) {
+    done();
+    $("#save-status").textContent =
+      "Save failed: could not reach the server. Your edits are kept; try again.";
+    updateSaveButton();
+    return;
+  }
+  done();
   $("#save-status").textContent = res.ok
     ? "Saved. template.json and template.md updated."
     : `Save failed: ${await errorDetail(res)}`;
@@ -375,12 +478,13 @@ let applyId = null;
 
 function applyError(msg) {
   const box = $("#apply-error");
-  box.innerHTML = msg;
-  box.classList.remove("hidden");
+  box.innerHTML = errorHtml(msg);
+  box.hidden = false;
+  box.scrollIntoView({ behavior: scrollBehavior(), block: "nearest" });
 }
 
 $("#apply-btn").addEventListener("click", async () => {
-  $("#apply-error").classList.add("hidden");
+  $("#apply-error").hidden = true;
   const deck = $("#content-file").files[0];
   if (!deck) { applyError("Choose a content deck (.pptx) first."); return; }
   const mode = (document.querySelector('input[name="bk"]:checked') || {}).value;
@@ -401,8 +505,8 @@ $("#apply-btn").addEventListener("click", async () => {
     fd.append("package_path", path);
   }
 
-  $("#apply-status").textContent = "Applying…";
-  $("#apply-btn").disabled = true;
+  $("#apply-status").textContent = "Retheming…";
+  const done = setBusy($("#apply-btn"), "Retheming…");
   try {
     const res = await fetch("/api/apply", { method: "POST", body: fd });
     if (!res.ok) {
@@ -420,7 +524,7 @@ $("#apply-btn").addEventListener("click", async () => {
     applyError(`Could not reach the server (<code>${err}</code>).`);
   } finally {
     $("#apply-status").textContent = "";
-    $("#apply-btn").disabled = false;
+    done();
   }
 });
 
@@ -478,7 +582,7 @@ async function refreshDraftPreview() {
       .replace(/&/g, "&amp;").replace(/</g, "&lt;");
     $("#choices-frame").srcdoc =
       `<body style="font:13px system-ui;color:${cssVar("--stage-ink")};
-        background:${cssVar("--stage-bg")};padding:18px">Live preview could not be rendered: ${msg}<br><br>
+        background:${cssVar("--stage-bg")};padding:16px">Live preview could not be rendered: ${msg}<br><br>
         Your choices below still apply when you confirm.</body>`;
   }
 }
@@ -505,7 +609,7 @@ function fitPreviewHeight() {
 }
 $("#choices-frame").addEventListener("load", fitPreviewHeight);
 window.addEventListener("resize", () => {
-  if (!$("#choices-card").classList.contains("hidden")) fitPreviewHeight();
+  if (!$("#choices-card").hidden) fitPreviewHeight();
 });
 
 // Preview page: show 1.25 slides tall, so the next slide peeks in and it
@@ -527,7 +631,7 @@ function fitResultFrame() {
 }
 $("#preview-frame").addEventListener("load", fitResultFrame);
 window.addEventListener("resize", () => {
-  if (!$("#tab-preview").classList.contains("hidden")) fitResultFrame();
+  if (!$("#tab-preview").hidden) fitResultFrame();
 });
 
 // If an option names a color (e.g. "Recolor to brand primary #RRGGBB"), show
@@ -558,51 +662,59 @@ function previewFontNames(label, fonts) {
 
 function renderProtect(n) {
   if (!n) return;
-  const box = document.createElement("div");
+  const box = document.createElement("fieldset");
   box.className = "protect-card";
   box.id = "protect-block";
   const slides = Array.from({ length: n }, (_, k) => k + 1).map(s =>
-    `<label class="opt"><input type="checkbox" class="p-slide" value="${s}"> ${s}</label>`
+    `<label class="opt"><input type="checkbox" class="p-slide" value="${s}"
+       aria-label="Protect slide ${s}"> ${s}</label>`
   ).join("");
   const adj = [["color", "Colors"], ["font", "Fonts"], ["title", "Title sizes"],
                ["heading", "Headings"], ["resize", "Resize"]].map(([v, l]) =>
     `<label class="opt"><input type="checkbox" class="p-adj" value="${v}" checked> ${l}</label>`
   ).join("");
-  box.innerHTML = `<strong>Protect slides</strong>
+  box.innerHTML = `<legend>Protect slides</legend>
     <p class="muted">Tick any slides that should ignore
       the choices above. <b>Full retain</b> keeps them looking exactly as in your
       deck; <b>Partial</b> still applies only the adjustments you leave ticked.</p>
-    <div class="slide-grid">${slides}</div>
-    <div class="pmode">
+    <div class="slide-grid" role="group" aria-label="Slides to protect">${slides}</div>
+    <div class="pmode" role="radiogroup" aria-label="How protected slides are handled">
       <label class="opt"><input type="radio" name="pmode" class="p-mode"
         value="full" checked> Full retain (original look)</label>
       <label class="opt"><input type="radio" name="pmode" class="p-mode"
         value="partial"> Partial: still apply</label>
     </div>
-    <div class="padj hidden">${adj}</div>`;
+    <div class="padj" role="group" aria-label="Adjustments still applied" hidden>${adj}</div>`;
   $("#choices-list").appendChild(box);
   const padj = box.querySelector(".padj");
   box.querySelectorAll(".p-mode").forEach(el => el.addEventListener("change", () => {
-    padj.classList.toggle("hidden",
-      box.querySelector(".p-mode:checked").value !== "partial");
+    padj.hidden = box.querySelector(".p-mode:checked").value !== "partial";
     schedulePreviewRefresh();
   }));
   box.querySelectorAll(".p-slide, .p-adj").forEach(el =>
     el.addEventListener("change", schedulePreviewRefresh));
 }
 
+// One primary button per view: while the choices are open, confirming them is
+// the forward step, so "Retheme deck" steps back to a secondary button.
+function showChoices(on) {
+  $("#choices-card").hidden = !on;
+  $("#apply-btn").classList.toggle("primary", !on);
+}
+
 function renderDecisions(decisions, slideCount) {
   const list = $("#choices-list");
   list.innerHTML = "";
   decisions.forEach((d, i) => {
-    const div = document.createElement("div");
+    // a fieldset, so the question is read out with each of its options
+    const div = document.createElement("fieldset");
     div.className = "decision";
     div.dataset.id = d.id;
     const swatches = (d.swatches || []).map(h =>
       `<span style="background:#${h}" title="#${h}"></span>`).join("");
     let controls;
     if (d.kind === "layout") {
-      controls = `<select class="d-choice">` + d.options.map(o =>
+      controls = `<select class="d-choice" aria-labelledby="dq${i}">` + d.options.map(o =>
         `<option value="${o.value}" ${o.value === d.default ? "selected" : ""}>
          ${o.label}</option>`).join("") + `</select>`;
     } else {
@@ -616,7 +728,7 @@ function renderDecisions(decisions, slideCount) {
     }
     const heading = d.kind === "font"
       ? previewFontNames(d.label, [d.source, d.target]) : d.label;
-    div.innerHTML = `<strong>${heading}</strong>
+    div.innerHTML = `<legend id="dq${i}">${heading}</legend>
       ${swatches ? `<div class="swatches">${swatches}</div>` : ""}
       <p class="muted">${d.detail || ""}</p>
       ${controls}`;
@@ -625,15 +737,16 @@ function renderDecisions(decisions, slideCount) {
   list.querySelectorAll(".d-choice").forEach(el =>
     el.addEventListener("change", schedulePreviewRefresh));
   renderProtect(slideCount);  // per-slide "leave as-is" controls
-  $("#choices-card").classList.remove("hidden");
+  showChoices(true);
   $("#choices-card").scrollIntoView({ behavior: scrollBehavior() });
   refreshDraftPreview();  // first render uses the pre-selected defaults
 }
 
 $("#confirm-btn").addEventListener("click", async () => {
   const choices = currentChoices();
+  $("#apply-error").hidden = true;
   $("#confirm-status").textContent = "Applying…";
-  $("#confirm-btn").disabled = true;
+  const done = setBusy($("#confirm-btn"), "Applying…");
   try {
     const res = await fetch(`/api/apply/${applyId}/confirm`, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -642,19 +755,20 @@ $("#confirm-btn").addEventListener("click", async () => {
       applyError(`Apply failed: ${await errorDetail(res)}`);
       return;
     }
-    $("#choices-card").classList.add("hidden");
+    showChoices(false);
     finishApply(await res.json());
   } catch (err) {
     applyError(`Could not reach the server (<code>${err}</code>).`);
   } finally {
     $("#confirm-status").textContent = "";
-    $("#confirm-btn").disabled = false;
+    done();
   }
 });
 
 function finishApply(out) {
-    $("#tabbtn-preview").disabled = false;
-    $("#tabbtn-preview").title = "";
+    // unlock the Preview tab: there is now a deck to show
+    ["aria-disabled", "aria-describedby", "title"].forEach(a =>
+      $("#tabbtn-preview").removeAttribute(a));
     const warnings = out.warnings || [];
     const isCritical = w => w.startsWith("BRANDKIT OUTDATED")
                          || w.startsWith("APPROXIMATE OUTPUT");
@@ -666,15 +780,15 @@ function finishApply(out) {
        : rest.length ? `${plural(rest.length, "note", "notes")} in Logs.`
        : "No warnings: all content was retained.");
     $("#apply-warnings").innerHTML =
-      critical.map(w => `<div class="error-box">${w}</div>`).join("") +
-      (rest.length ? rest.map(w => "&bull; " + w).join("<br>") : "");
+      critical.map(w => `<div class="error-box">${icon("alert")}<div>${w}</div></div>`).join("") +
+      (rest.length ? `<ul>${rest.map(w => `<li>${w}</li>`).join("")}</ul>` : "");
     const details = $("#notes-details");
     if (warnings.length) {
       $("#notes-count").textContent = `(${warnings.length})`;
-      details.classList.remove("hidden");
+      details.hidden = false;
       details.open = critical.length > 0;  // auto-expand critical warnings
     } else {
-      details.classList.add("hidden");
+      details.hidden = true;
     }
     $("#preview-frame").src = `/api/apply/${applyId}/preview`;
     switchTab("preview");
@@ -697,9 +811,9 @@ $("#html-btn").addEventListener("click", () => {
 // Next deck, same brandkit: clear only the deck, keep the brandkit choice.
 $("#again-btn").addEventListener("click", () => {
   $("#content-file").value = "";
-  $("#deck-picked").classList.add("hidden");
-  $("#apply-error").classList.add("hidden");
-  $("#choices-card").classList.add("hidden");
+  $("#deck-picked").hidden = true;
+  $("#apply-error").hidden = true;
+  showChoices(false);
   switchTab("apply");
   $("#content-file").focus();
 });

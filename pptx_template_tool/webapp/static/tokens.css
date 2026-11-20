@@ -1,18 +1,35 @@
-/* Retheme design tokens: the ONLY place colors, radii, type sizes and motion
-   are defined. tests/test_design_rules.py fails on hex colors or off-scale
-   font sizes anywhere else in the UI. See DESIGN.md. */
+/* Retheme design tokens: the ONLY place colors, radii, type sizes, spacing,
+   control heights and motion are defined. tests/test_design_rules.py fails on
+   literal colors, off-scale font sizes or off-scale spacing anywhere else in
+   the UI. See DESIGN.md. */
 :root {
   color-scheme:light;   /* light only: DESIGN.md defines no dark theme */
-  --ink:#1c1c28; --muted:#6b7280; --line:#e5e7eb; --brand:#10069F;
+  --ink:#1c1c28; --muted:#6b7280; --brand:#10069F;
+  --line:#e5e7eb;                    /* dividers and card borders */
+  --line-strong:#7f8797;             /* control edges: 3:1 against surface and bg */
   --warn:#b45309; --bg:#f6f7fb;
   --surface:#fcfdff;                 /* white, nudged toward the brand hue */
   --on-accent:#ffffff;
   --error-bg:#fdecec; --error-border:#f5c2c0; --error-text:#b3261e;
-  --focus-ring:0 0 0 3px rgba(16,6,159,.28);   /* Signal Blue, soft */
+  /* derived shades: tints of the tokens above, never new solid colors */
+  --ring:var(--brand);
+  --brand-hover:color-mix(in srgb, var(--brand) 86%, var(--surface));
+  --accent-soft:color-mix(in srgb, var(--brand) 8%, var(--surface));
+  --hover:color-mix(in srgb, var(--ink) 6%, var(--surface));
+  --track:color-mix(in srgb, var(--ink) 10%, var(--surface));
+  --swatch-edge:color-mix(in srgb, var(--ink) 25%, transparent);
+  --scroll-thumb:color-mix(in srgb, var(--ink) 18%, transparent);
   --r-xs:4px; --r-ctrl:5px; --r-thumb:6px; --r-md:8px; --r-lg:10px; --r-pill:999px;
+  /* spacing steps (px): 4 / 8 / 12 / 16 / 24 / 32, nothing else */
+  --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-6:24px; --sp-8:32px;
+  /* control heights: 32 default, 28 for dense rows (tables, layout chips) */
+  --control-h:32px; --control-h-sm:28px; --hit:44px;
+  --icon:16px;
   --dur:.15s;
   /* dark stage behind slide previews (slides carry their own colors) */
   --stage-bg:#333333; --stage-ink:#eeeeee;
   /* type scale (px): 11 / 12 / 13 / 14 / 16 / 20, nothing else */
   --fs-xs:11px; --fs-sm:12px; --fs-md:13px; --fs-base:14px; --fs-lg:16px; --fs-xl:20px;
+  /* select chevron; a background image cannot read currentColor (Muted) */
+  --chevron:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
 }

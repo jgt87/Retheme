@@ -1,0 +1,14 @@
+{
+  "base": "http://127.0.0.1:8767",
+  "api": {},
+  "primary": "button.primary",
+  "controls": "button, select, input[type=text], input[type=number], [role=tab]",
+  "exempt": ".link-btn",
+  "views": [
+    { "name": "extract", "path": "/", "ready": "#dropzone", "main": "#dropzone" },
+    { "name": "retheme", "path": "/", "ready": "#dropzone", "main": "#deck-dropzone",
+      "steps": [{ "clickSelector": "#tabbtn-apply" }, { "wait": 200 }] },
+    { "name": "help", "path": "/", "ready": "#dropzone",
+      "steps": [{ "clickSelector": "#help-btn" }, { "wait": 200 }] }
+  ]
+}

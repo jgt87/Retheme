@@ -34,3 +34,5 @@ jobs:
         env:
           RETHEME_E2E_CHANNEL: msedge   # preinstalled on windows runners
         run: python -m pytest -q e2e/
+      - name: Rendered design rules (headless Edge, own port)
+        run: node scripts/design-checks.mjs --root pptx_template_tool/webapp/static --config scripts/design-check.json

@@ -9,6 +9,15 @@
 <link rel="stylesheet" href="app.css?v={{version}}">
 </head>
 <body>
+<!-- The one icon set: 24px grid, 2px stroke, drawn in the text color. -->
+<svg hidden aria-hidden="true">
+  <symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"></path></symbol>
+  <symbol id="i-arrow-left" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"></path></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20L12 3zM12 10v4M12 17h.01"></path></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><path d="M9 9a3 3 0 1 1 4.5 2.6c-.9.5-1.5 1.2-1.5 2.4M12 18h.01"></path></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"></path></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 8 0v4"></path></symbol>
+</svg>
 <header>
   <div class="brand">
     <h1>Retheme</h1>
@@ -16,16 +25,19 @@
     <span class="version-pill" id="version-pill">v{{version}}</span>
   </div>
   <nav class="tabs" role="tablist" aria-label="Workflow steps">
-    <button id="tabbtn-extract" class="active" role="tab"
+    <button type="button" id="tabbtn-extract" class="active" role="tab"
             aria-selected="true" aria-controls="tab-extract">Extract brandkit</button>
-    <button id="tabbtn-apply" role="tab"
+    <button type="button" id="tabbtn-apply" role="tab" tabindex="-1"
             aria-selected="false" aria-controls="tab-apply">Retheme deck</button>
-    <button id="tabbtn-preview" role="tab" aria-selected="false"
-            aria-controls="tab-preview" disabled
+    <button type="button" id="tabbtn-preview" role="tab" tabindex="-1" aria-selected="false"
+            aria-controls="tab-preview" aria-disabled="true"
+            aria-describedby="preview-locked"
             title="Retheme a deck first">Preview</button>
   </nav>
-  <button id="help-btn" class="help-btn" aria-label="How to use Retheme"
-          title="How to use Retheme">?</button>
+  <span class="sr-only" id="preview-locked">Retheme a deck first</span>
+  <button type="button" id="help-btn" class="help-btn" aria-pressed="false"
+          aria-label="How to use Retheme" title="How to use Retheme"><svg
+          class="icon" aria-hidden="true"><use href="#i-help"></use></svg></button>
 </header>
 <main>
 
@@ -35,35 +47,44 @@
     <p class="muted">Produces a template package: <code>template.md</code> brand
       spec, <code>template.json</code>, all assets (logos, backgrounds,
       decorative shapes) with exact positions, and layout previews.</p>
-    <div id="dropzone" class="dropzone">
-      <p><strong>Drop a .pptx / .potx here</strong> or</p>
-      <input type="file" id="file-input" accept=".pptx,.potx"
+    <div class="error-box" id="error-box" role="alert" hidden></div>
+    <label id="dropzone" class="dropzone">
+      <input type="file" id="file-input" class="dz-input" accept=".pptx,.potx"
              aria-label="Choose a template file (.pptx or .potx)">
-    </div>
-    <div class="error-box hidden" id="error-box" role="alert"></div>
+      <span><strong>Choose a template</strong><span class="dz-drop-hint"> or drop it here</span></span>
+      <span class="dz-limits">One .pptx or .potx file</span>
+    </label>
   </div>
 
-  <div class="card hidden" id="progress-card">
-    <p id="progress-step" role="status" aria-live="polite">Starting…</p>
+  <div class="card" id="progress-card" hidden>
+    <div class="progress-head">
+      <p id="progress-step" role="status" aria-live="polite">Starting…</p>
+      <span class="muted" id="progress-pct"></span>
+    </div>
     <progress id="progress-bar" value="0" max="1" aria-label="Extraction progress"></progress>
   </div>
 
-  <div class="hidden" id="review">
+  <div id="review" hidden>
     <div class="toolbar">
-      <button id="goto-apply-btn">Apply this brandkit &rarr;</button>
-      <button id="save-btn" class="secondary" disabled>Save corrections</button>
-      <button id="download-btn" class="secondary">Download package (zip)</button>
+      <button type="button" id="goto-apply-btn" class="primary">Apply this brandkit <svg
+        class="icon" aria-hidden="true"><use href="#i-arrow-right"></use></svg></button>
+      <button type="button" id="save-btn" disabled>Save corrections</button>
+      <button type="button" id="download-btn">Download package (zip)</button>
+      <button type="button" class="link-btn flag" id="review-count" hidden></button>
       <span class="muted" id="save-status" role="status"></span>
-      <button type="button" class="link-btn flag hidden" id="review-count"></button>
     </div>
 
     <div class="card">
       <h2>Colors: semantic roles</h2>
       <p class="muted">Roles are inferred from where each color is actually used; correct any that are wrong.</p>
+      <div class="table-wrap">
       <table id="colors-table">
-        <thead><tr><th>Color</th><th>Theme slot</th><th>Observed usage</th><th>Role</th></tr></thead>
+        <caption class="sr-only">Theme colors and their roles</caption>
+        <thead><tr><th scope="col">Color</th><th scope="col">Theme slot</th>
+          <th scope="col">Observed usage</th><th scope="col">Role</th></tr></thead>
         <tbody></tbody>
       </table>
+      </div>
     </div>
 
     <div class="card">
@@ -71,64 +92,82 @@
       <div class="layout-nav" id="layout-nav"></div>
       <div class="grid">
         <div id="layout-preview"></div>
-        <div id="layout-detail"></div>
+        <div id="layout-detail" class="table-wrap"></div>
       </div>
     </div>
 
     <div class="card">
       <h2>Assets</h2>
-      <p class="muted"><span class="flag">⚠ verify</span> marks a low-confidence classification or raster fallback.
-        Positions are editable (inches) for grouped/rotated elements the extractor may misread.</p>
+      <p class="muted"><span class="flag"><svg class="icon" aria-hidden="true"><use
+        href="#i-alert"></use></svg>Verify</span> marks a low-confidence classification or raster fallback.
+        Positions are editable (inches) for grouped or rotated elements the extractor may misread.</p>
+      <div class="table-wrap">
       <table id="assets-table">
-        <thead><tr><th><span class="sr-only">Preview</span></th><th>Asset</th><th>Type</th><th>Used on</th>
-          <th>X&Prime;</th><th>Y&Prime;</th><th>W&Prime;</th><th>H&Prime;</th><th>Flag</th></tr></thead>
+        <caption class="sr-only">Assets found in the template</caption>
+        <thead><tr><th scope="col"><span class="sr-only">Preview</span></th>
+          <th scope="col">Asset</th><th scope="col">Type</th><th scope="col">Used on</th>
+          <th scope="col" class="num">X&Prime;</th><th scope="col" class="num">Y&Prime;</th>
+          <th scope="col" class="num">W&Prime;</th><th scope="col" class="num">H&Prime;</th>
+          <th scope="col">Flag</th></tr></thead>
         <tbody></tbody>
       </table>
+      </div>
     </div>
   </div>
 </div>
 
-<div id="tab-apply" class="hidden" role="tabpanel" aria-labelledby="tabbtn-apply" tabindex="0">
+<div id="tab-apply" role="tabpanel" aria-labelledby="tabbtn-apply" tabindex="0" hidden>
   <div class="card" id="apply-card">
     <h2>Retheme a content deck with a brandkit</h2>
     <p class="muted">Upload a presentation with your content. Everything is
       retained (text, pictures, tables, charts, shapes and other objects)
-      and restyled with the brandkit's theme. Charts are recolored to the
-      brand palette where possible; pictures are kept as-is. The HTML
+      and restyled with the brandkit’s theme. Charts are recolored to the
+      brand palette where possible; pictures are kept as they are. The HTML
       preview shows text, pictures and tables; charts appear as markers but
       are fully present in the downloaded PPTX.</p>
 
-    <p><strong>Content deck</strong></p>
-    <div id="deck-dropzone" class="dropzone">
-      <p><strong>Drop a .pptx / .potx / .ppsx here</strong> or</p>
-      <input type="file" id="content-file" accept=".pptx,.potx,.ppsx"
+    <span class="field-label" id="deck-label">Content deck</span>
+    <label id="deck-dropzone" class="dropzone">
+      <input type="file" id="content-file" class="dz-input" accept=".pptx,.potx,.ppsx"
              aria-label="Choose a content deck (.pptx, .potx or .ppsx)">
-      <div class="picked hidden" id="deck-picked"></div>
-    </div>
+      <span><strong>Choose a deck</strong><span class="dz-drop-hint"> or drop it here</span></span>
+      <span class="dz-limits">One .pptx, .potx or .ppsx file</span>
+      <span class="picked" id="deck-picked" hidden></span>
+    </label>
 
-    <p class="section-label"><strong>Brandkit source:</strong></p>
-    <p><label><input type="radio" name="bk" value="session" id="bk-session" disabled>
-       Use the extracted brandkit <span class="muted" id="bk-session-note">
-       (extract one first)</span></label></p>
-    <p><label><input type="radio" name="bk" value="zip">
-       Upload a template-package zip:</label>
-       <input type="file" id="package-zip" accept=".zip"
-              aria-label="Choose a template-package zip"></p>
-    <p><label><input type="radio" name="bk" value="path">
-       Folder on this computer:</label>
-       <input type="text" id="package-path" size="60"
-              aria-label="Template-package folder path"
-              placeholder="C:\path\to\template-package"></p>
-    <p><button id="apply-btn">Retheme deck</button>
-       <span class="muted" id="apply-status" role="status"></span></p>
-    <div class="error-box hidden" id="apply-error" role="alert"></div>
+    <fieldset class="field-group">
+      <legend>Brandkit source</legend>
+      <div class="source-row">
+        <label class="opt"><input type="radio" name="bk" value="session" id="bk-session" disabled>
+          Use the extracted brandkit <span class="muted" id="bk-session-note">(extract one first)</span></label>
+      </div>
+      <div class="source-row">
+        <label class="opt"><input type="radio" name="bk" value="zip">
+          Upload a template-package zip</label>
+        <input type="file" id="package-zip" accept=".zip"
+               aria-label="Choose a template-package zip">
+      </div>
+      <div class="source-row">
+        <label class="opt"><input type="radio" name="bk" value="path">
+          Folder on this computer</label>
+        <input type="text" id="package-path" autocomplete="off" spellcheck="false"
+               aria-label="Template-package folder path"
+               placeholder="C:\path\to\template-package">
+      </div>
+    </fieldset>
+    <div class="actions">
+      <button type="button" id="apply-btn" class="primary">Retheme deck</button>
+      <span class="sr-only" id="apply-status" role="status"></span>
+    </div>
   </div>
 
-  <div class="card hidden" id="choices-card">
+  <div class="error-box" id="apply-error" role="alert" hidden></div>
+
+  <div class="card" id="choices-card" hidden>
     <h2>Confirm your preferences</h2>
     <p class="muted">The brandkit and your deck differ in a few places.
-      Review the proposed handling. The preview on the right always shows
-      the result of your current selections.</p>
+      Review the proposed handling. The preview always shows the result of
+      your current selections.</p>
     <div class="choices-grid">
       <div id="choices-list"></div>
       <div>
@@ -140,31 +179,35 @@
           effect. <span id="preview-status" role="status"></span></p>
       </div>
     </div>
-    <p><button id="confirm-btn">Apply with these choices</button>
-       <span class="muted" id="confirm-status" role="status"></span></p>
+    <div class="actions">
+      <button type="button" id="confirm-btn" class="primary">Apply with these choices</button>
+      <span class="sr-only" id="confirm-status" role="status"></span>
+    </div>
   </div>
 </div>
 
-<div id="tab-preview" class="hidden" role="tabpanel" aria-labelledby="tabbtn-preview" tabindex="0">
+<div id="tab-preview" role="tabpanel" aria-labelledby="tabbtn-preview" tabindex="0" hidden>
   <div class="card" id="result-card">
-    <h2>Preview &amp; export</h2>
+    <h2>Preview and export</h2>
     <div class="toolbar">
-      <button id="pptx-btn">Download PPTX (edit in PowerPoint)</button>
-      <button id="html-btn" class="secondary">Download HTML</button>
-      <button id="again-btn" class="secondary">Retheme another deck</button>
+      <button type="button" id="pptx-btn" class="primary">Download PPTX (edit in PowerPoint)</button>
+      <button type="button" id="html-btn">Download HTML</button>
+      <button type="button" id="again-btn">Retheme another deck</button>
       <span class="muted" id="result-info" role="status"></span>
     </div>
     <iframe id="preview-frame" class="stage" title="Rethemed deck preview"></iframe>
-    <details class="notes hidden" id="notes-details">
-      <summary>Logs <span class="muted" id="notes-count"></span></summary>
+    <details class="notes" id="notes-details" hidden>
+      <summary><svg class="icon" aria-hidden="true"><use href="#i-chevron"></use></svg>Logs
+        <span class="muted" id="notes-count"></span></summary>
       <div class="body muted" id="apply-warnings"></div>
     </details>
   </div>
 </div>
 
-<div id="tab-help" class="hidden" role="region" aria-label="How to use Retheme">
+<div id="tab-help" role="region" aria-label="How to use Retheme" hidden>
   <div class="card help">
-    <button class="secondary" id="help-back">&larr; Back</button>
+    <button type="button" id="help-back"><svg class="icon" aria-hidden="true"><use
+      href="#i-arrow-left"></use></svg>Back</button>
     <h2>How to use Retheme</h2>
     <p class="muted">Put existing slide content onto a corporate template in four
       steps. Everything runs on your computer.</p>
@@ -213,7 +256,7 @@
             <strong>Logs</strong> at the bottom for any notes: retained content,
             slide-size differences, or an outdated-brandkit warning.</li>
           <li>Click <strong>Download PPTX</strong> for a native PowerPoint file
-            built on the template's own layouts, fully editable. Download HTML is
+            built on the template’s own layouts, fully editable. Download HTML is
             also available.</li>
         </ul>
       </div></li>
@@ -222,11 +265,7 @@
 </div>
 
 <footer class="app-note">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-    <rect x="4" y="11" width="16" height="10" rx="2"></rect>
-    <path d="M8 11V7a4 4 0 0 1 8 0v4"></path>
-  </svg>
+  <svg class="icon" aria-hidden="true"><use href="#i-lock"></use></svg>
   <span>Everything runs on this computer. Your files are processed locally and
     are never uploaded or sent to any outside service, and no AI is involved.</span>
 </footer>
