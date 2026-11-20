@@ -5,6 +5,27 @@ versions follow [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-20
+
+### Changed
+- **Buttons, tabs and fields are one height and have a visible edge.** Fields
+  and secondary buttons used a very light border that was hard to see; every
+  control now has a darker edge and lines up in its row.
+- **The whole drop zone opens the file picker**, by click or keyboard. It lights
+  up while you drag over it, a long file name is shortened in the middle, and a
+  file dropped beside the zone no longer replaces the page.
+- Buttons show what they are doing ("Retheming…", "Saving…") and ignore a second
+  press while busy. Extraction shows a percentage.
+- The header tabs work with the arrow keys, and the locked Preview tab says why
+  it is locked.
+- Error messages carry an icon and the word "Error", and appear above what they
+  concern. A dropped file of the wrong type is refused on the deck drop zone too.
+- On a phone or a narrow window the tables scroll sideways inside their card
+  and controls are large enough to tap.
+- The retheme choices are a plain divided list instead of boxes inside a box,
+  and screen readers hear each question with its options.
+- Empty tables say why they are empty.
+
 ### Fixed
 - **A website could pass itself off as local.** The server's cross-site
   request guard accepted any origin that merely started with `http://localhost`
